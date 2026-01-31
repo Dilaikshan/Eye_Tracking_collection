@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "502955151932",
+    "project_id": "eye-tracking-data-collection",
+    "storage_bucket": "eye-tracking-data-collection.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:502955151932:android:bf50c19eb1155c8319e939",
+        "android_client_info": {
+          "package_name": "com.example.eye_tracking_collection"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvn8etmHXWq-MYnn5oTKcT0cp6L7MIrsQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
