@@ -6,11 +6,20 @@ import 'package:eye_tracking_collection/core/constants/app_colors.dart';
 import 'package:eye_tracking_collection/core/services/haptics_service.dart';
 import 'package:eye_tracking_collection/core/services/tts_service.dart';
 import 'package:eye_tracking_collection/models/user_profile.dart';
+import 'package:eye_tracking_collection/models/eye_tracking_data.dart';
 import 'package:eye_tracking_collection/services/firestore_service.dart';
+import 'package:eye_tracking_collection/services/mediapipe_service.dart';
+import 'package:eye_tracking_collection/services/mlkit_service.dart';
+import 'package:eye_tracking_collection/services/azure_service.dart'
+    hide AzureFaceData;
+import 'package:eye_tracking_collection/services/data_fusion_service.dart';
 import 'package:eye_tracking_collection/widgets/pulsing_target.dart';
+import 'package:eye_tracking_collection/widgets/eye_tracking_overlay.dart';
 import 'package:flutter/material.dart';
+import 'package:google_mlkit_face_mesh_detection/google_mlkit_face_mesh_detection.dart';
 
 enum ExperimentPhase { guidelines, calibration, pulse, moving, done }
+
 enum ExperimentMode { calibration, pulse, moving }
 
 class CollectionGridArgs {
@@ -20,11 +29,15 @@ class CollectionGridArgs {
   final String languageCode;
 
   factory CollectionGridArgs.empty() => CollectionGridArgs(
-        profile: const UserProfile(
+        profile: UserProfile(
           name: 'Guest',
           age: 0,
           blindnessType: 'Unknown',
           languageCode: 'en',
+          dominantEye: 'both',
+          visionAcuity: 5,
+          wearsGlasses: false,
+          consentGiven: false,
         ),
         languageCode: 'en',
       );
@@ -58,6 +71,18 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   final TtsService _tts = TtsService();
   final HapticsService _haptics = HapticsService();
   final FirestoreService _firestore = FirestoreService();
+
+  // Eye tracking services
+  final MediaPipeService _mediapipe = MediaPipeService();
+  final MLKitService _mlkit = MLKitService();
+  final AzureFaceService _azure = AzureFaceService();
+  final DataFusionService _fusion = DataFusionService();
+
+  // Current eye tracking data
+  MediaPipeIrisData? _currentMediaPipeData;
+  MLKitFaceData? _currentMLKitData;
+  AzureFaceData? _currentAzureData;
+
   final List<Map<String, dynamic>> _pendingSamples = [];
   int _chunkIndex = 0;
   String? _sessionId;
@@ -68,6 +93,14 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   bool _headSizeCalibrated = false;
   bool _headAligned = false;
   bool _alignmentManuallySet = false;
+
+  // Timer tracking
+  int _remainingSeconds = 0;
+  Timer? _countdownTimer;
+
+  // Moving pattern tracking
+  int _lineStepIndex = 0;
+  bool _showCamera = true;
 
   @override
   void initState() {
@@ -85,13 +118,47 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-      _cameraController = CameraController(front, ResolutionPreset.low, enableAudio: false);
+      _cameraController =
+          CameraController(front, ResolutionPreset.low, enableAudio: false);
       await _cameraController!.initialize();
       if (!mounted) return;
+
+      // Start camera stream for eye tracking
+      _startCameraStream();
+
       setState(() {});
     } catch (_) {
       // ignore camera setup errors in dev
     }
+  }
+
+  void _startCameraStream() {
+    if (_cameraController == null || !_cameraController!.value.isInitialized)
+      return;
+
+    _cameraController!.startImageStream((CameraImage image) async {
+      // Get rotation based on device orientation
+      final rotation = _getImageRotation();
+
+      // Process with MediaPipe and ML Kit in parallel (fast, on-device)
+      // Skip Azure for real-time processing (too slow)
+      final futures = await Future.wait([
+        _mediapipe.processImage(image, rotation),
+        _mlkit.processImage(image, rotation),
+      ]);
+
+      _currentMediaPipeData = futures[0] as MediaPipeIrisData?;
+      _currentMLKitData = futures[1] as MLKitFaceData?;
+
+      // Optional: Call Azure periodically (every 30 frames) for validation
+      // _currentAzureData remains null for now - Azure is called during batch upload
+    });
+  }
+
+  InputImageRotation _getImageRotation() {
+    // Simplified - assumes portrait mode
+    // TODO: Handle device rotation properly
+    return InputImageRotation.rotation0deg;
   }
 
   Future<void> _bootstrapSession() async {
@@ -115,12 +182,22 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
   List<_ColorRegion> _buildRegions() {
     return [
-      _ColorRegion(label: 'red', color: Colors.red, alignment: Alignment.topLeft),
-      _ColorRegion(label: 'yellow', color: Colors.yellow, alignment: Alignment.topCenter),
-      _ColorRegion(label: 'green', color: Colors.green, alignment: Alignment.topRight),
-      _ColorRegion(label: 'blue', color: Colors.blue, alignment: Alignment.bottomLeft),
-      _ColorRegion(label: 'magenta', color: Colors.purpleAccent, alignment: Alignment.bottomCenter),
-      _ColorRegion(label: 'cyan', color: Colors.cyan, alignment: Alignment.bottomRight),
+      _ColorRegion(
+          label: 'red', color: Colors.red, alignment: Alignment.topLeft),
+      _ColorRegion(
+          label: 'yellow',
+          color: Colors.yellow,
+          alignment: Alignment.topCenter),
+      _ColorRegion(
+          label: 'green', color: Colors.green, alignment: Alignment.topRight),
+      _ColorRegion(
+          label: 'blue', color: Colors.blue, alignment: Alignment.bottomLeft),
+      _ColorRegion(
+          label: 'magenta',
+          color: Colors.purpleAccent,
+          alignment: Alignment.bottomCenter),
+      _ColorRegion(
+          label: 'cyan', color: Colors.cyan, alignment: Alignment.bottomRight),
     ];
   }
 
@@ -142,6 +219,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     _phase = ExperimentPhase.calibration;
     _colorIndex = 0;
     _pulseRepeat = 0;
+    _showCamera = false; // Hide camera during data collection
     _startCalibrationStep();
     setState(() {});
   }
@@ -158,11 +236,23 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     _tts.speak('Look at the ${region.label} area');
     _haptics.pulse();
     _recordSample(mode: ExperimentMode.calibration, region: region);
+
+    // Start countdown
+    _remainingSeconds = 2;
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_remainingSeconds > 0) {
+        setState(() => _remainingSeconds--);
+      }
+    });
+
     _timer?.cancel();
     _timer = Timer(const Duration(seconds: 2), () {
+      _countdownTimer?.cancel();
       _colorIndex++;
       _startCalibrationStep();
     });
+    setState(() {});
   }
 
   void _startPulse() {
@@ -181,9 +271,20 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     _tts.speak('Look at the ${region.label} color');
     _haptics.pulse();
     _recordSample(mode: ExperimentMode.pulse, region: region);
+
+    // Start countdown (2 seconds total: 1.5s visible + 0.5s gap)
+    _remainingSeconds = 2;
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_remainingSeconds > 0) {
+        setState(() => _remainingSeconds--);
+      }
+    });
+
     _timer?.cancel();
     _timer = Timer(const Duration(milliseconds: 1500), () {
       _timer = Timer(const Duration(milliseconds: 500), () {
+        _countdownTimer?.cancel();
         _colorIndex++;
         _startPulse();
       });
@@ -200,49 +301,97 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     if (_movingSpeedIndex >= 3) {
       _phase = ExperimentPhase.done;
       _timer?.cancel();
+      _countdownTimer?.cancel();
       _flushSamples();
       setState(() {});
       return;
     }
-    final speedDurations = [600, 400, 200];
+
+    // Slower speeds: 1200ms, 800ms, 500ms (instead of 600, 400, 200)
+    final speedDurations = [1200, 800, 500];
     final speedLabels = ['slow', 'medium', 'fast'];
+
+    // Line patterns: horizontal top, horizontal bottom, vertical, diagonal
+    final linePatterns = [
+      [0, 1, 2], // Top row: left -> center -> right
+      [2, 1, 0], // Top row reverse
+      [3, 4, 5], // Bottom row: left -> center -> right
+      [5, 4, 3], // Bottom row reverse
+      [0, 3], // Left column: top -> bottom
+      [3, 0], // Left column reverse
+      [2, 5], // Right column: top -> bottom
+      [5, 2], // Right column reverse
+      [0, 1, 2, 5, 4, 3], // U-shape
+      [0, 4, 2], // Diagonal pattern
+    ];
+
     _tts.speak('Follow the moving point ${speedLabels[_movingSpeedIndex]}');
     _haptics.pulse();
+
+    // Start 15-second countdown (increased from 10)
+    _remainingSeconds = 15;
+    _lineStepIndex = 0;
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_remainingSeconds > 0) {
+        setState(() => _remainingSeconds--);
+      }
+    });
+
+    // Select a random pattern for variety
+    final pattern = linePatterns[Random().nextInt(linePatterns.length)];
+
     _timer?.cancel();
-    _timer = Timer.periodic(Duration(milliseconds: speedDurations[_movingSpeedIndex]), (_) {
-      final next = Random().nextInt(_regions.length);
+    _timer = Timer.periodic(
+        Duration(milliseconds: speedDurations[_movingSpeedIndex]), (_) {
+      // Follow the line pattern
+      final next = pattern[_lineStepIndex % pattern.length];
       _currentGridIndex = next;
+      _colorIndex = next;
       final region = _regions[next];
-      _recordSample(mode: ExperimentMode.moving, region: region, speedLabel: speedLabels[_movingSpeedIndex]);
+      _recordSample(
+          mode: ExperimentMode.moving,
+          region: region,
+          speedLabel: speedLabels[_movingSpeedIndex]);
+      _lineStepIndex++;
       setState(() {});
     });
-    Future.delayed(const Duration(seconds: 10), () {
+
+    Future.delayed(const Duration(seconds: 15), () {
       _timer?.cancel();
+      _countdownTimer?.cancel();
       _movingSpeedIndex++;
       _advanceMoving();
     });
   }
 
-  void _recordSample({required ExperimentMode mode, required _ColorRegion region, String? speedLabel}) {
-    final now = DateTime.now().millisecondsSinceEpoch;
+  void _recordSample(
+      {required ExperimentMode mode,
+      required _ColorRegion region,
+      String? speedLabel}) {
     final target = _alignmentToNormalized(region.alignment);
-    final sample = {
-      'timestamp': now,
-      'mode': mode.name,
-      'color': region.label,
-      'target': {'x': target.dx, 'y': target.dy},
-      // TODO: wire MediaPipe gaze/pupil/headPose here
-      'gaze': {'x': target.dx, 'y': target.dy},
-      'pupil': {
-        'left': {'x': target.dx, 'y': target.dy},
-        'right': {'x': target.dx, 'y': target.dy},
-      },
-      'headPose': {'yaw': 0.0, 'pitch': 0.0, 'roll': 0.0},
-      'blink': false,
-      'confidence': 0.0,
-      if (speedLabel != null) 'speed': speedLabel,
-    };
-    _pendingSamples.add(sample);
+
+    // Fuse data from all sources
+    final eyeData = _fusion.fuseData(
+      target: target,
+      mode: mode.name,
+      colorLabel: region.label,
+      mediapipe: _currentMediaPipeData,
+      mlkit: _currentMLKitData,
+      azure: _currentAzureData, // Usually null during real-time collection
+      speedLabel: speedLabel,
+    );
+
+    // Skip samples with low confidence (below 60%)
+    if (eyeData.overallConfidence < 0.6) {
+      debugPrint(
+          'Skipping sample - low confidence: ${eyeData.overallConfidence}');
+      return;
+    }
+
+    // Convert to Firestore format
+    _pendingSamples.add(eyeData.toFirestore());
+
     if (_pendingSamples.length >= 30) {
       _flushSamples();
     }
@@ -256,7 +405,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
   Future<void> _flushSamples() async {
     if (_sessionId == null || _pendingSamples.isEmpty) return;
-    final userId = widget.args.profile.name.isEmpty ? 'guest' : widget.args.profile.name;
+    final userId =
+        widget.args.profile.name.isEmpty ? 'guest' : widget.args.profile.name;
     await _firestore.addSamples(
       userId: userId,
       sessionId: _sessionId!,
@@ -270,7 +420,11 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _countdownTimer?.cancel();
+    _cameraController?.stopImageStream();
     _cameraController?.dispose();
+    _mediapipe.dispose();
+    _mlkit.dispose();
     _tts.dispose();
     _flushSamples();
     super.dispose();
@@ -280,12 +434,30 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   Widget build(BuildContext context) {
     final region = _regions[_currentGridIndex];
     const borderColor = Colors.tealAccent;
+
+    // Calculate fused gaze for overlay
+    Offset? fusedGaze;
+    if (_currentMediaPipeData != null &&
+        _currentMediaPipeData!.leftEyeOpen &&
+        _currentMediaPipeData!.rightEyeOpen) {
+      fusedGaze = Offset(
+        (_currentMediaPipeData!.leftIrisCenter.dx +
+                _currentMediaPipeData!.rightIrisCenter.dx) /
+            2,
+        (_currentMediaPipeData!.leftIrisCenter.dy +
+                _currentMediaPipeData!.rightIrisCenter.dy) /
+            2,
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Collection')),
       body: Stack(
         children: [
-          if (_cameraController != null && _cameraController!.value.isInitialized)
+          if (_showCamera &&
+              _cameraController != null &&
+              _cameraController!.value.isInitialized)
             Center(
               child: Stack(
                 alignment: Alignment.center,
@@ -294,7 +466,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                     width: 260,
                     height: 340,
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [Colors.black, Colors.black87]),
+                      gradient: const LinearGradient(
+                          colors: [Colors.black, Colors.black87]),
                       border: Border.all(
                         color: borderColor,
                         width: 3,
@@ -327,11 +500,21 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                 ],
               ),
             ),
+          // Eye tracking overlay (only show during data collection)
+          if (_phase != ExperimentPhase.guidelines)
+            EyeTrackingOverlay(
+              mediapipeData: _currentMediaPipeData,
+              mlkitData: _currentMLKitData,
+              azureData: _currentAzureData,
+              fusedGaze: fusedGaze,
+              showOverlay: true,
+            ),
           Align(
-            alignment: _gridPositions[_currentGridIndex],
+            alignment: _regions[_colorIndex % _regions.length].alignment,
             child: GestureDetector(
               onTap: _advanceGrid,
-              child: PulsingTarget(color: region.color),
+              child: PulsingTarget(
+                  color: _regions[_colorIndex % _regions.length].color),
             ),
           ),
           Positioned(
@@ -340,7 +523,28 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
             right: 16,
             child: Column(
               children: [
-                Text(_statusText(), textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineMedium),
+                Text(_statusText(),
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineMedium),
+                const SizedBox(height: 8),
+                if (_phase != ExperimentPhase.guidelines &&
+                    _phase != ExperimentPhase.done)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.tealAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.tealAccent, width: 2),
+                    ),
+                    child: Text(
+                      'Time remaining: $_remainingSeconds seconds',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Colors.tealAccent,
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 if (_phase == ExperimentPhase.guidelines) ...[
                   Row(
@@ -349,7 +553,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                       ElevatedButton(
                         onPressed: _headAligned ? _startExperiment : null,
                         style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 16, horizontal: 24),
                           backgroundColor: Colors.tealAccent,
                           foregroundColor: Colors.black,
                           shadowColor: Colors.tealAccent,
@@ -362,7 +567,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                         onPressed: _alignmentManuallySet ? null : _markAligned,
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.tealAccent,
-                          side: const BorderSide(color: Colors.tealAccent, width: 2),
+                          side: const BorderSide(
+                              color: Colors.tealAccent, width: 2),
                         ),
                         child: const Text('I am aligned'),
                       ),
@@ -429,7 +635,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 }
 
 class _ColorRegion {
-  _ColorRegion({required this.label, required this.color, required this.alignment});
+  _ColorRegion(
+      {required this.label, required this.color, required this.alignment});
   final String label;
   final Color color;
   final Alignment alignment;
@@ -448,8 +655,10 @@ class _GuidePainter extends CustomPainter {
     final rect = Rect.fromLTWH(0, 0, size.width, size.height);
     canvas.drawRect(rect, paint);
     // crosshair lines
-    canvas.drawLine(Offset(size.width / 2, 0), Offset(size.width / 2, size.height), paint);
-    canvas.drawLine(Offset(0, size.height / 2), Offset(size.width, size.height / 2), paint);
+    canvas.drawLine(
+        Offset(size.width / 2, 0), Offset(size.width / 2, size.height), paint);
+    canvas.drawLine(
+        Offset(0, size.height / 2), Offset(size.width, size.height / 2), paint);
   }
 
   @override

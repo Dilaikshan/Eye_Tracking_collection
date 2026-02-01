@@ -1,3 +1,4 @@
 {
-  "cmake.sourceDirectory": "F:/Projects/Eye_Tracking_collection/linux"
+  "cmake.sourceDirectory": "F:/Projects/Eye_Tracking_collection/linux",
+  "java.configuration.updateBuildConfiguration": "automatic"
 }
