@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'package:google_mlkit_commons/google_mlkit_commons.dart';
 import 'package:eye_tracking_collection/models/eye_tracking_sample.dart';
+import 'package:eye_tracking_collection/models/eye_tracking_data.dart'
+    show MediaPipeIrisData;
+import 'package:eye_tracking_collection/models/mediapipe_data.dart';
+import 'package:eye_tracking_collection/models/mlkit_data.dart';
+import 'package:eye_tracking_collection/models/azure_data.dart';
 import 'package:eye_tracking_collection/models/user_profile.dart';
 import 'package:eye_tracking_collection/services/mediapipe_service.dart';
 import 'package:eye_tracking_collection/services/mlkit_face_service.dart';
@@ -26,9 +31,17 @@ class DataCollectionService {
     _currentProfile = profile;
   }
 
+  Offset _normalizedToPixel(Offset normalized, Size screenSize) {
+    return Offset(
+      normalized.dx * screenSize.width,
+      normalized.dy * screenSize.height,
+    );
+  }
+
   Future<EyeTrackingSample?> collectSample({
     required InputImage inputImage,
-    required Offset target,
+    required Offset targetNormalized,
+    required Size screenSize,
     required String mode,
     required String colorLabel,
     String? speedLabel,
@@ -36,20 +49,25 @@ class DataCollectionService {
     _frameCount++;
 
     try {
-      // 1. ALWAYS collect MediaPipe (primary) - REQUIRED
-      final mediapipe = await _mediapipe.processImage(inputImage);
+      final mediapipeRaw = await _mediapipe.processInputImage(inputImage);
+      final mediapipe =
+          mediapipeRaw != null ? _mapMediaPipeResult(mediapipeRaw) : null;
 
-      // 2. ALWAYS collect ML Kit (supplementary) - REQUIRED
       final mlkit = await _mlkit.processImage(inputImage);
 
-      // Check if primary services succeeded
       if (mediapipe == null || mlkit == null) {
-        debugPrint('⚠️ Primary service failed - skipping sample');
+        debugPrint(
+            '⚠️ Primary service failed - MediaPipe: ${mediapipe != null}, MLKit: ${mlkit != null}');
+        return null;
+      }
+
+      if (mediapipe.confidence < CollectionConstants.minIrisConfidence) {
+        debugPrint('⚠️ MediaPipe confidence too low: ${mediapipe.confidence}');
         return null;
       }
 
       // 3. OCCASIONALLY collect Azure (validation only) - OPTIONAL
-      dynamic azure;
+      AzureData? azure;
       final timeSinceAzure = DateTime.now().difference(_lastAzureCall);
 
       if (useAzure &&
@@ -76,24 +94,34 @@ class DataCollectionService {
         return null;
       }
 
+      final targetPixel = _normalizedToPixel(targetNormalized, screenSize);
+
       // 6. Create sample
       final sample = EyeTrackingSample(
         sampleId: _uuid.v4(),
         timestamp: DateTime.now(),
-        target: target,
+        targetPixel: targetPixel,
+        targetNormalized: targetNormalized,
         mode: mode,
         colorLabel: colorLabel,
         speedLabel: speedLabel,
-        mediapipeData: null, // MediaPipe data adapter needed
+        mediapipeData: mediapipe,
         mlkitData: mlkit,
-        azureData: null, // Azure data adapter needed
-        deviceInfo: _getDeviceInfo(inputImage),
+        azureData: azure,
+        deviceInfo: _getDeviceInfo(inputImage, screenSize),
         participantContext: _getParticipantContext(),
         quality: quality,
       );
 
+      debugPrint('✓ Sample collected: $mode - $colorLabel');
       debugPrint(
-          '✓ Sample collected: $mode - $colorLabel (conf: ${quality['overallConfidence']})');
+          '  - Target: (${targetPixel.dx.toStringAsFixed(2)}, ${targetPixel.dy.toStringAsFixed(2)})');
+      debugPrint(
+          '  - Left Pupil: (${mediapipe.leftPupilCenter.dx.toStringAsFixed(2)}, ${mediapipe.leftPupilCenter.dy.toStringAsFixed(2)})');
+      debugPrint(
+          '  - Right Pupil: (${mediapipe.rightPupilCenter.dx.toStringAsFixed(2)}, ${mediapipe.rightPupilCenter.dy.toStringAsFixed(2)})');
+      debugPrint(
+          '  - Confidence: ${quality['overallConfidence'].toStringAsFixed(2)}');
       return sample;
     } catch (e) {
       debugPrint('❌ Error collecting sample: $e');
@@ -101,28 +129,53 @@ class DataCollectionService {
     }
   }
 
+  MediaPipeData _mapMediaPipeResult(MediaPipeIrisData data) {
+    final width = data.imageWidth == 0 ? 1 : data.imageWidth;
+    final height = data.imageHeight == 0 ? 1 : data.imageHeight;
+
+    List<Offset> _scalePoints(List<Offset> points) {
+      return points
+          .map((p) => Offset(p.dx * width, p.dy * height))
+          .toList(growable: false);
+    }
+
+    final leftIris = _scalePoints(data.leftIrisLandmarks);
+    final rightIris = _scalePoints(data.rightIrisLandmarks);
+
+    final leftPupil = data.rawLeftIrisCenterPx ??
+        Offset(
+            data.leftPupilCenter.dx * width, data.leftPupilCenter.dy * height);
+    final rightPupil = data.rawRightIrisCenterPx ??
+        Offset(data.rightPupilCenter.dx * width,
+            data.rightPupilCenter.dy * height);
+
+    return MediaPipeData(
+      leftIrisLandmarks: leftIris,
+      rightIrisLandmarks: rightIris,
+      leftPupilCenter: leftPupil,
+      rightPupilCenter: rightPupil,
+      leftEyeOpen: data.leftEyeOpen,
+      rightEyeOpen: data.rightEyeOpen,
+      confidence: data.confidence,
+      faceLandmarkCount: 468,
+    );
+  }
+
   Map<String, dynamic> _assessQuality(
-    dynamic mediapipeData,
-    dynamic mlkitData,
-    dynamic azureData,
+    MediaPipeData mediapipeData,
+    MLKitData mlkitData,
+    AzureData? azureData,
   ) {
     double totalConfidence = 0;
     int sourceCount = 0;
 
-    // MediaPipe confidence
-    if (mediapipeData != null && mediapipeData.confidence != null) {
-      totalConfidence += mediapipeData.confidence;
-      sourceCount++;
-    }
+    totalConfidence += mediapipeData.confidence;
+    sourceCount++;
 
-    // ML Kit confidence
-    if (mlkitData != null && mlkitData.confidence != null) {
-      totalConfidence += mlkitData.confidence;
-      sourceCount++;
-    }
+    totalConfidence += mlkitData.confidence;
+    sourceCount++;
 
-    // Azure confidence (if available)
-    if (azureData != null && azureData.confidence != null) {
+    if (azureData != null) {
       totalConfidence += azureData.confidence;
       sourceCount++;
     }
@@ -131,21 +184,17 @@ class DataCollectionService {
         sourceCount > 0 ? totalConfidence / sourceCount : 0.0;
 
     // Detect blinks
-    final blink = mediapipeData != null &&
-        mediapipeData.leftEyeOpen != null &&
-        mediapipeData.rightEyeOpen != null &&
-        (!mediapipeData.leftEyeOpen || !mediapipeData.rightEyeOpen);
+    final blink = !mediapipeData.leftEyeOpen || !mediapipeData.rightEyeOpen;
 
-    // Detect head movement (simplified)
-    final headMovement = mlkitData != null &&
-            (mlkitData.headYaw.abs() > 15 || mlkitData.headPitch.abs() > 15)
-        ? 'large'
-        : 'minimal';
+    final headMovement =
+        (mlkitData.headYaw.abs() > 15 || mlkitData.headPitch.abs() > 15)
+            ? 'large'
+            : 'minimal';
 
     return {
       'overallConfidence': overallConfidence,
-      'mediapipeDetected': mediapipeData != null,
-      'mlkitDetected': mlkitData != null,
+      'mediapipeDetected': true,
+      'mlkitDetected': true,
       'azureDetected': azureData != null,
       'blink': blink,
       'headMovement': headMovement,
@@ -153,15 +202,17 @@ class DataCollectionService {
     };
   }
 
-  Map<String, dynamic> _getDeviceInfo(InputImage inputImage) {
+  Map<String, dynamic> _getDeviceInfo(InputImage inputImage, Size screenSize) {
     final metadata = inputImage.metadata;
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
 
     return {
       'model': Platform.isAndroid ? 'Android' : 'iOS',
-      'screenWidth': metadata?.size.width.toInt() ?? 0,
-      'screenHeight': metadata?.size.height.toInt() ?? 0,
-      'cameraResolution':
-          '${metadata?.size.width.toInt()}x${metadata?.size.height.toInt()}',
+      'screenWidthPixels': screenSize.width.toInt(),
+      'screenHeightPixels': screenSize.height.toInt(),
+      'screenDensity': view.devicePixelRatio,
+      'cameraResolutionWidth': metadata?.size.width.toInt() ?? 0,
+      'cameraResolutionHeight': metadata?.size.height.toInt() ?? 0,
       'orientation': metadata?.rotation.name ?? 'unknown',
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     };

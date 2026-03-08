@@ -23,8 +23,13 @@ class MLKitData {
 
   Map<String, dynamic> toMap() {
     return {
+      'detected': true,
+      'confidence': confidence,
       'gazeEstimate': gazeEstimate != null
-          ? {'x': gazeEstimate!.dx, 'y': gazeEstimate!.dy}
+          ? {
+              'pixelX': gazeEstimate!.dx,
+              'pixelY': gazeEstimate!.dy,
+            }
           : null,
       'headPose': {
         'yaw': headYaw,
@@ -39,7 +44,6 @@ class MLKitData {
       },
       'leftEyeOpenProb': leftEyeOpenProbability,
       'rightEyeOpenProb': rightEyeOpenProbability,
-      'confidence': confidence,
     };
   }
 }

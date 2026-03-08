@@ -12,8 +12,90 @@ class MediaPipeService {
     _detector = FaceMeshDetector(option: FaceMeshDetectorOptions.faceMesh);
   }
 
-  /// Process camera image and extract iris/pupil data
-  Future<MediaPipeIrisData?> processImage(CameraImage image, InputImageRotation rotation) async {
+  Future<MediaPipeIrisData?> processInputImage(InputImage inputImage) async {
+    if (_isProcessing || _detector == null) return null;
+    _isProcessing = true;
+
+    try {
+      final faces = await _detector!.processImage(inputImage);
+
+      if (faces.isEmpty) {
+        _isProcessing = false;
+        return null;
+      }
+
+      final face = faces.first;
+      final meshPoints = face.points;
+
+      if (meshPoints.length < 478) {
+        _isProcessing = false;
+        return null;
+      }
+
+      final imgW = inputImage.metadata?.size.width.toDouble() ?? 0;
+      final imgH = inputImage.metadata?.size.height.toDouble() ?? 0;
+
+      final leftIrisPixels = _extractIrisPixels(meshPoints, isLeft: true);
+      final rightIrisPixels = _extractIrisPixels(meshPoints, isLeft: false);
+
+      final leftIrisCenterPx = _calculateCenter(leftIrisPixels);
+      final rightIrisCenterPx = _calculateCenter(rightIrisPixels);
+
+      // Normalize to [0,1] range using metadata sizes
+      final leftIrisNorm = Offset(
+        imgW == 0 ? 0 : leftIrisCenterPx.dx / imgW,
+        imgH == 0 ? 0 : leftIrisCenterPx.dy / imgH,
+      );
+      final rightIrisNorm = Offset(
+        imgW == 0 ? 0 : rightIrisCenterPx.dx / imgW,
+        imgH == 0 ? 0 : rightIrisCenterPx.dy / imgH,
+      );
+
+      final leftIrisNormPoints = leftIrisPixels
+          .map((p) => Offset(
+                imgW == 0 ? 0 : p.dx / imgW,
+                imgH == 0 ? 0 : p.dy / imgH,
+              ))
+          .toList();
+      final rightIrisNormPoints = rightIrisPixels
+          .map((p) => Offset(
+                imgW == 0 ? 0 : p.dx / imgW,
+                imgH == 0 ? 0 : p.dy / imgH,
+              ))
+          .toList();
+
+      final leftEyeOpen = _isEyeOpen(meshPoints, isLeft: true);
+      final rightEyeOpen = _isEyeOpen(meshPoints, isLeft: false);
+
+      _isProcessing = false;
+
+      return MediaPipeIrisData(
+        leftIrisCenter: leftIrisNorm,
+        rightIrisCenter: rightIrisNorm,
+        leftPupilCenter: leftIrisNorm,
+        rightPupilCenter: rightIrisNorm,
+        leftIrisLandmarks: leftIrisNormPoints,
+        rightIrisLandmarks: rightIrisNormPoints,
+        rawLeftIrisCenterPx: leftIrisCenterPx,
+        rawRightIrisCenterPx: rightIrisCenterPx,
+        imageWidth: imgW,
+        imageHeight: imgH,
+        confidence: 0.9,
+        leftEyeOpen: leftEyeOpen,
+        rightEyeOpen: rightEyeOpen,
+      );
+    } catch (e) {
+      _isProcessing = false;
+      return null;
+    }
+  }
+
+  /// Process camera image and extract iris/pupil data.
+  /// Returns normalized [0,1] coordinates relative to image size.
+  /// Also stores raw pixel coordinates in [rawLeftIrisCenter] / [rawRightIrisCenter]
+  /// for camera-preview overlay rendering.
+  Future<MediaPipeIrisData?> processImage(
+      CameraImage image, InputImageRotation rotation) async {
     if (_isProcessing || _detector == null) return null;
     _isProcessing = true;
 
@@ -36,18 +118,29 @@ class MediaPipeService {
         return null;
       }
 
+      // Image dimensions for normalization
+      final imgW = image.width.toDouble();
+      final imgH = image.height.toDouble();
+
       // Extract iris landmarks (MediaPipe indices)
       // Left iris: indices 468-472
       // Right iris: indices 473-477
-      final leftIrisPoints = _extractIrisPoints(meshPoints, isLeft: true);
-      final rightIrisPoints = _extractIrisPoints(meshPoints, isLeft: false);
+      final leftIrisPixels = _extractIrisPixels(meshPoints, isLeft: true);
+      final rightIrisPixels = _extractIrisPixels(meshPoints, isLeft: false);
 
-      final leftIrisCenter = _calculateCenter(leftIrisPoints);
-      final rightIrisCenter = _calculateCenter(rightIrisPoints);
+      final leftIrisCenterPx = _calculateCenter(leftIrisPixels);
+      final rightIrisCenterPx = _calculateCenter(rightIrisPixels);
 
-      // Calculate pupil centers (approximate as iris center)
-      final leftPupil = leftIrisCenter;
-      final rightPupil = rightIrisCenter;
+      // Normalize to [0,1] range
+      final leftIrisNorm =
+          Offset(leftIrisCenterPx.dx / imgW, leftIrisCenterPx.dy / imgH);
+      final rightIrisNorm =
+          Offset(rightIrisCenterPx.dx / imgW, rightIrisCenterPx.dy / imgH);
+
+      final leftIrisNormPoints =
+          leftIrisPixels.map((p) => Offset(p.dx / imgW, p.dy / imgH)).toList();
+      final rightIrisNormPoints =
+          rightIrisPixels.map((p) => Offset(p.dx / imgW, p.dy / imgH)).toList();
 
       // Detect eye open/closed
       final leftEyeOpen = _isEyeOpen(meshPoints, isLeft: true);
@@ -56,13 +149,19 @@ class MediaPipeService {
       _isProcessing = false;
 
       return MediaPipeIrisData(
-        leftIrisCenter: leftIrisCenter,
-        rightIrisCenter: rightIrisCenter,
-        leftPupilCenter: leftPupil,
-        rightPupilCenter: rightPupil,
-        leftIrisLandmarks: leftIrisPoints,
-        rightIrisLandmarks: rightIrisPoints,
-        confidence: 0.9, // MediaPipe doesn't provide confidence, use fixed
+        // Normalized [0,1] coordinates for data recording
+        leftIrisCenter: leftIrisNorm,
+        rightIrisCenter: rightIrisNorm,
+        leftPupilCenter: leftIrisNorm,
+        rightPupilCenter: rightIrisNorm,
+        leftIrisLandmarks: leftIrisNormPoints,
+        rightIrisLandmarks: rightIrisNormPoints,
+        // Raw pixel coordinates for camera-preview overlay
+        rawLeftIrisCenterPx: leftIrisCenterPx,
+        rawRightIrisCenterPx: rightIrisCenterPx,
+        imageWidth: imgW,
+        imageHeight: imgH,
+        confidence: 0.9,
         leftEyeOpen: leftEyeOpen,
         rightEyeOpen: rightEyeOpen,
       );
@@ -72,7 +171,8 @@ class MediaPipeService {
     }
   }
 
-  List<Offset> _extractIrisPoints(List<FaceMeshPoint> meshPoints, {required bool isLeft}) {
+  List<Offset> _extractIrisPixels(List<FaceMeshPoint> meshPoints,
+      {required bool isLeft}) {
     // MediaPipe face mesh iris indices:
     // Left iris: 468, 469, 470, 471, 472
     // Right iris: 473, 474, 475, 476, 477
@@ -104,38 +204,39 @@ class MediaPipeService {
 
   bool _isEyeOpen(List<FaceMeshPoint> meshPoints, {required bool isLeft}) {
     // Use eye aspect ratio (EAR) to detect blinks
-    // Simplified: check vertical distance between upper/lower eyelid points
-
-    // Left eye landmarks: 159, 145 (vertical)
-    // Right eye landmarks: 386, 374 (vertical)
-
+    // Left eye vertical landmarks: 159 (upper), 145 (lower)
+    // Right eye vertical landmarks: 386 (upper), 374 (lower)
     try {
       if (isLeft) {
         final upper = meshPoints[159];
         final lower = meshPoints[145];
         final distance = (upper.y - lower.y).abs();
-        return distance > 5; // Threshold for eye open
+        return distance > 3;
       } else {
         final upper = meshPoints[386];
         final lower = meshPoints[374];
         final distance = (upper.y - lower.y).abs();
-        return distance > 5;
+        return distance > 3;
       }
     } catch (e) {
-      return true; // Default to open if error
+      return true;
     }
   }
 
-  InputImage _convertCameraImage(CameraImage image, InputImageRotation rotation) {
+  InputImage _convertCameraImage(
+      CameraImage image, InputImageRotation rotation) {
     final WriteBuffer allBytes = WriteBuffer();
     for (final Plane plane in image.planes) {
       allBytes.putUint8List(plane.bytes);
     }
     final bytes = allBytes.done().buffer.asUint8List();
 
-    final Size imageSize = Size(image.width.toDouble(), image.height.toDouble());
+    final Size imageSize =
+        Size(image.width.toDouble(), image.height.toDouble());
 
-    final inputImageFormat = InputImageFormatValue.fromRawValue(image.format.raw) ?? InputImageFormat.nv21;
+    final inputImageFormat =
+        InputImageFormatValue.fromRawValue(image.format.raw) ??
+            InputImageFormat.nv21;
 
     return InputImage.fromBytes(
       bytes: bytes,

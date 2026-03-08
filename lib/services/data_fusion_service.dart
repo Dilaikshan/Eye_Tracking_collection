@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:eye_tracking_collection/models/eye_tracking_data.dart';
 
 class DataFusionService {
-  /// Combine data from all three sources with weighted averaging
+  /// Combine data from all three sources with weighted averaging.
+  /// Even if all sources return null, a metadata-only sample is created
+  /// with low confidence so the session/timing data is preserved.
   EyeTrackingData fuseData({
     required Offset target,
     required String mode,
@@ -57,7 +59,8 @@ class DataFusionService {
     }
 
     // Calculate overall confidence
-    double confidence = 0;
+    // Minimum 0.1 so that metadata-only samples are not filtered out
+    double confidence = 0.1;
     int sources = 0;
     if (mediapipe != null) {
       confidence += mediapipe.confidence;
@@ -71,7 +74,8 @@ class DataFusionService {
       confidence += azure.confidence;
       sources++;
     }
-    if (sources > 0) confidence /= sources;
+    // Average across detected sources only (don't dilute by 3 when only 1 available)
+    if (sources > 0) confidence = confidence / sources;
 
     return EyeTrackingData(
       timestamp: DateTime.now(),
@@ -92,7 +96,6 @@ class DataFusionService {
   }
 
   Offset _gazeFromIrisPosition(Offset leftIris, Offset rightIris) {
-    // Average of both iris positions
     return Offset(
       (leftIris.dx + rightIris.dx) / 2,
       (leftIris.dy + rightIris.dy) / 2,

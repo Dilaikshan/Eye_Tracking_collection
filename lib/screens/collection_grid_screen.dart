@@ -3,20 +3,24 @@ import 'dart:math';
 
 import 'package:camera/camera.dart';
 import 'package:eye_tracking_collection/core/constants/app_colors.dart';
+import 'package:eye_tracking_collection/core/constants/collection_constants.dart';
 import 'package:eye_tracking_collection/core/services/haptics_service.dart';
 import 'package:eye_tracking_collection/core/services/tts_service.dart';
 import 'package:eye_tracking_collection/models/user_profile.dart';
 import 'package:eye_tracking_collection/models/eye_tracking_data.dart';
+import 'package:eye_tracking_collection/models/mediapipe_data.dart';
+import 'package:eye_tracking_collection/models/mlkit_data.dart';
+import 'package:eye_tracking_collection/models/azure_data.dart';
+import 'package:eye_tracking_collection/models/eye_tracking_sample.dart';
 import 'package:eye_tracking_collection/services/firestore_service.dart';
 import 'package:eye_tracking_collection/services/mediapipe_service.dart';
 import 'package:eye_tracking_collection/services/mlkit_service.dart';
-import 'package:eye_tracking_collection/services/azure_service.dart'
-    hide AzureFaceData;
-import 'package:eye_tracking_collection/services/data_fusion_service.dart';
 import 'package:eye_tracking_collection/widgets/pulsing_target.dart';
 import 'package:eye_tracking_collection/widgets/eye_tracking_overlay.dart';
 import 'package:flutter/material.dart';
-import 'package:google_mlkit_face_mesh_detection/google_mlkit_face_mesh_detection.dart';
+import 'package:google_mlkit_face_mesh_detection/google_mlkit_face_mesh_detection.dart'
+    show InputImageRotation;
+import 'package:uuid/uuid.dart';
 
 enum ExperimentPhase { guidelines, calibration, pulse, moving, done }
 
@@ -75,13 +79,16 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   // Eye tracking services
   final MediaPipeService _mediapipe = MediaPipeService();
   final MLKitService _mlkit = MLKitService();
-  final AzureFaceService _azure = AzureFaceService();
-  final DataFusionService _fusion = DataFusionService();
+  final _uuid = const Uuid();
 
-  // Current eye tracking data
+  // Current eye tracking data (raw from camera stream)
   MediaPipeIrisData? _currentMediaPipeData;
   MLKitFaceData? _currentMLKitData;
-  AzureFaceData? _currentAzureData;
+
+  MediaPipeData? _overlayMediaPipeData;
+  MLKitData? _overlayMLKitData;
+  Size _cameraImageSize = Size.zero;
+  bool _showEyeTrackingOverlay = true;
 
   final List<Map<String, dynamic>> _pendingSamples = [];
   int _chunkIndex = 0;
@@ -137,28 +144,48 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       return;
 
     _cameraController!.startImageStream((CameraImage image) async {
-      // Get rotation based on device orientation
+      // Capture image dimensions before the async gap
+      final imageSize = Size(image.width.toDouble(), image.height.toDouble());
       final rotation = _getImageRotation();
 
       // Process with MediaPipe and ML Kit in parallel (fast, on-device)
-      // Skip Azure for real-time processing (too slow)
       final futures = await Future.wait([
         _mediapipe.processImage(image, rotation),
         _mlkit.processImage(image, rotation),
       ]);
 
-      _currentMediaPipeData = futures[0] as MediaPipeIrisData?;
-      _currentMLKitData = futures[1] as MLKitFaceData?;
+      final newMp = futures[0] as MediaPipeIrisData?;
+      final newMl = futures[1] as MLKitFaceData?;
 
-      // Optional: Call Azure periodically (every 30 frames) for validation
-      // _currentAzureData remains null for now - Azure is called during batch upload
+      // Always update – the overlay needs fresh data every frame
+      if (mounted) {
+        _cameraImageSize = imageSize;
+        _currentMediaPipeData = newMp;
+        _currentMLKitData = newMl;
+        _overlayMediaPipeData =
+            newMp != null ? _mapMediaPipeForOverlay(newMp, imageSize) : null;
+        _overlayMLKitData =
+            newMl != null ? _mapMlkitForOverlay(newMl, imageSize) : null;
+        setState(() {});
+      }
     });
   }
 
   InputImageRotation _getImageRotation() {
-    // Simplified - assumes portrait mode
-    // TODO: Handle device rotation properly
-    return InputImageRotation.rotation0deg;
+    // Use the camera sensor's orientation to produce correctly-oriented
+    // InputImage metadata so that MediaPipe/ML Kit landmarks are accurate.
+    if (_cameraController == null) return InputImageRotation.rotation0deg;
+    final sensorOrientation = _cameraController!.description.sensorOrientation;
+    switch (sensorOrientation) {
+      case 90:
+        return InputImageRotation.rotation90deg;
+      case 180:
+        return InputImageRotation.rotation180deg;
+      case 270:
+        return InputImageRotation.rotation270deg;
+      default:
+        return InputImageRotation.rotation0deg;
+    }
   }
 
   Future<void> _bootstrapSession() async {
@@ -219,7 +246,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     _phase = ExperimentPhase.calibration;
     _colorIndex = 0;
     _pulseRepeat = 0;
-    _showCamera = false; // Hide camera during data collection
+    // Keep camera visible so stream continues providing eye tracking data
     _startCalibrationStep();
     setState(() {});
   }
@@ -235,7 +262,6 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     final region = _regions[_colorIndex];
     _tts.speak('Look at the ${region.label} area');
     _haptics.pulse();
-    _recordSample(mode: ExperimentMode.calibration, region: region);
 
     // Start countdown
     _remainingSeconds = 2;
@@ -246,8 +272,15 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       }
     });
 
+    // Collect samples every 200ms throughout the full 2-second dwell
     _timer?.cancel();
-    _timer = Timer(const Duration(seconds: 2), () {
+    Timer? dwellSampler;
+    dwellSampler = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      _recordSample(mode: ExperimentMode.calibration, region: region);
+    });
+
+    Timer(const Duration(seconds: 2), () {
+      dwellSampler?.cancel();
       _countdownTimer?.cancel();
       _colorIndex++;
       _startCalibrationStep();
@@ -270,7 +303,6 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     final region = _regions[_colorIndex];
     _tts.speak('Look at the ${region.label} color');
     _haptics.pulse();
-    _recordSample(mode: ExperimentMode.pulse, region: region);
 
     // Start countdown (2 seconds total: 1.5s visible + 0.5s gap)
     _remainingSeconds = 2;
@@ -281,9 +313,16 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       }
     });
 
-    _timer?.cancel();
-    _timer = Timer(const Duration(milliseconds: 1500), () {
-      _timer = Timer(const Duration(milliseconds: 500), () {
+    // Collect samples every 200ms during the 1.5s visible window
+    Timer? pulseSampler;
+    pulseSampler =
+        Timer.periodic(const Duration(milliseconds: 200), (_) {
+      _recordSample(mode: ExperimentMode.pulse, region: region);
+    });
+
+    Timer(const Duration(milliseconds: 1500), () {
+      pulseSampler?.cancel();
+      Timer(const Duration(milliseconds: 500), () {
         _countdownTimer?.cancel();
         _colorIndex++;
         _startPulse();
@@ -303,7 +342,14 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       _timer?.cancel();
       _countdownTimer?.cancel();
       _flushSamples();
+      _tts.speak('Session complete. Thank you for participating.');
       setState(() {});
+      // Navigate back to home after 4 seconds
+      Future.delayed(const Duration(seconds: 4), () {
+        if (mounted) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      });
       return;
     }
 
@@ -369,37 +415,147 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       {required ExperimentMode mode,
       required _ColorRegion region,
       String? speedLabel}) {
-    final target = _alignmentToNormalized(region.alignment);
-
-    // Fuse data from all sources
-    final eyeData = _fusion.fuseData(
-      target: target,
-      mode: mode.name,
-      colorLabel: region.label,
-      mediapipe: _currentMediaPipeData,
-      mlkit: _currentMLKitData,
-      azure: _currentAzureData, // Usually null during real-time collection
-      speedLabel: speedLabel,
+    final targetNormalized = _alignmentToNormalized(region.alignment);
+    final screenSize = MediaQuery.of(context).size;
+    final targetPixel = Offset(
+      targetNormalized.dx * screenSize.width,
+      targetNormalized.dy * screenSize.height,
     );
 
-    // Skip samples with low confidence (below 60%)
-    if (eyeData.overallConfidence < 0.6) {
-      debugPrint(
-          'Skipping sample - low confidence: ${eyeData.overallConfidence}');
+    // Build MediaPipeData from current raw iris data (pixel coords)
+    MediaPipeData? mediapipeData;
+    if (_currentMediaPipeData != null) {
+      final mp = _currentMediaPipeData!;
+      final imgW = mp.imageWidth == 0 ? 1.0 : mp.imageWidth;
+      final imgH = mp.imageHeight == 0 ? 1.0 : mp.imageHeight;
+
+      // Convert normalized [0,1] landmarks back to pixel coords
+      final leftIrisPixels = mp.leftIrisLandmarks
+          .map((p) => Offset(p.dx * imgW, p.dy * imgH))
+          .toList();
+      final rightIrisPixels = mp.rightIrisLandmarks
+          .map((p) => Offset(p.dx * imgW, p.dy * imgH))
+          .toList();
+      final leftPupilPx = mp.rawLeftIrisCenterPx ??
+          Offset(mp.leftPupilCenter.dx * imgW, mp.leftPupilCenter.dy * imgH);
+      final rightPupilPx = mp.rawRightIrisCenterPx ??
+          Offset(mp.rightPupilCenter.dx * imgW, mp.rightPupilCenter.dy * imgH);
+
+      mediapipeData = MediaPipeData(
+        leftIrisLandmarks: leftIrisPixels,
+        rightIrisLandmarks: rightIrisPixels,
+        leftPupilCenter: leftPupilPx,
+        rightPupilCenter: rightPupilPx,
+        leftEyeOpen: mp.leftEyeOpen,
+        rightEyeOpen: mp.rightEyeOpen,
+        confidence: mp.confidence,
+        faceLandmarkCount: 478,
+      );
+    }
+
+    // Build MLKitData from current raw ML Kit data
+    MLKitData? mlkitData;
+    if (_currentMLKitData != null) {
+      final ml = _currentMLKitData!;
+      mlkitData = MLKitData(
+        gazeEstimate: ml.gazeEstimate,
+        headYaw: ml.headYaw,
+        headPitch: ml.headPitch,
+        headRoll: ml.headRoll,
+        faceBounds: ml.faceBounds,
+        leftEyeOpenProbability: ml.leftEyeOpenProbability,
+        rightEyeOpenProbability: ml.rightEyeOpenProbability,
+        confidence: ml.confidence,
+      );
+    }
+
+    // Quality assessment
+    double totalConf = 0;
+    int sources = 0;
+    if (mediapipeData != null) { totalConf += mediapipeData.confidence; sources++; }
+    if (mlkitData != null) { totalConf += mlkitData.confidence; sources++; }
+    final overallConf = sources > 0 ? totalConf / sources : 0.0;
+
+    // Skip sample if no eye data was detected at all
+    if (sources == 0) {
+      debugPrint('[Sample] SKIPPED – no eye data available yet for ${region.label}');
       return;
     }
 
-    // Convert to Firestore format
-    _pendingSamples.add(eyeData.toFirestore());
+    final blink = mediapipeData != null &&
+        (!mediapipeData.leftEyeOpen || !mediapipeData.rightEyeOpen);
+    final headMovement = mlkitData != null &&
+            (mlkitData.headYaw.abs() > 15 || mlkitData.headPitch.abs() > 15)
+        ? 'large'
+        : 'minimal';
 
-    if (_pendingSamples.length >= 30) {
+    final quality = {
+      'overallConfidence': overallConf,
+      'mediapipeDetected': mediapipeData != null,
+      'mlkitDetected': mlkitData != null,
+      'azureDetected': false,
+      'blink': blink,
+      'headMovement': headMovement,
+      'sourceCount': sources,
+    };
+
+    // Device info
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final deviceInfo = {
+      'screenWidthPixels': screenSize.width.toInt(),
+      'screenHeightPixels': screenSize.height.toInt(),
+      'screenDensity': view.devicePixelRatio,
+      'cameraResolutionWidth': _cameraImageSize.width.toInt(),
+      'cameraResolutionHeight': _cameraImageSize.height.toInt(),
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    };
+
+    // Participant context
+    final profile = widget.args.profile;
+    final participantContext = {
+      'blindnessType': profile.blindnessType,
+      'dominantEye': profile.dominantEye,
+      'visionAcuity': profile.visionAcuity,
+      'wearsGlasses': profile.wearsGlasses,
+      'age': profile.age,
+    };
+
+    final sample = EyeTrackingSample(
+      sampleId: _uuid.v4(),
+      timestamp: DateTime.now(),
+      targetPixel: targetPixel,
+      targetNormalized: targetNormalized,
+      mode: mode.name,
+      colorLabel: region.label,
+      speedLabel: speedLabel,
+      mediapipeData: mediapipeData,
+      mlkitData: mlkitData,
+      azureData: null,
+      deviceInfo: deviceInfo,
+      participantContext: participantContext,
+      quality: quality,
+    );
+
+    debugPrint('[Sample] mode=${mode.name} color=${region.label} '
+        'conf=${overallConf.toStringAsFixed(2)} '
+        'mediapipe=${mediapipeData != null} '
+        'mlkit=${mlkitData != null} '
+        'leftPupil=(${mediapipeData?.leftPupilCenter.dx.toStringAsFixed(1)}, '
+        '${mediapipeData?.leftPupilCenter.dy.toStringAsFixed(1)})');
+
+    _pendingSamples.add(sample.toFirestore());
+
+    if (_pendingSamples.length >= CollectionConstants.batchSize) {
       _flushSamples();
     }
   }
 
   Offset _alignmentToNormalized(Alignment alignment) {
-    final x = (alignment.x + 1) / 2;
-    final y = (alignment.y + 1) / 2;
+    // Map [-1,1] → [0,1], then add 8% inset from edges so targets are
+    // never at the absolute screen corners/edges.
+    const pad = 0.08;
+    final x = ((alignment.x + 1) / 2) * (1 - 2 * pad) + pad;
+    final y = ((alignment.y + 1) / 2) * (1 - 2 * pad) + pad;
     return Offset(x, y);
   }
 
@@ -415,6 +571,69 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     );
     _chunkIndex++;
     _pendingSamples.clear();
+  }
+
+  /// Converts MediaPipe normalized [0,1] landmarks to mirrored pixel coords
+  /// for the front-camera preview (which Flutter renders horizontally flipped).
+  MediaPipeData _mapMediaPipeForOverlay(
+      MediaPipeIrisData data, Size imageSize) {
+    // Front camera preview is mirrored: flip X  →  mirroredX = (1 - normX) * width
+    List<Offset> _toMirroredPixels(List<Offset> normPts) => normPts
+        .map((p) => Offset(
+              (1.0 - p.dx) * imageSize.width,
+              p.dy * imageSize.height,
+            ))
+        .toList(growable: false);
+
+    // Use raw pixel coords when available (already in image space but NOT mirrored)
+    // so we still mirror them.
+    Offset _mirrorPupil(Offset? rawPx, Offset normFallback) {
+      if (rawPx != null) {
+        // raw pixel → mirror X
+        return Offset(imageSize.width - rawPx.dx, rawPx.dy);
+      }
+      return Offset(
+          (1.0 - normFallback.dx) * imageSize.width,
+          normFallback.dy * imageSize.height);
+    }
+
+    return MediaPipeData(
+      leftIrisLandmarks: _toMirroredPixels(data.leftIrisLandmarks),
+      rightIrisLandmarks: _toMirroredPixels(data.rightIrisLandmarks),
+      leftPupilCenter:
+          _mirrorPupil(data.rawLeftIrisCenterPx, data.leftPupilCenter),
+      rightPupilCenter:
+          _mirrorPupil(data.rawRightIrisCenterPx, data.rightPupilCenter),
+      leftEyeOpen: data.leftEyeOpen,
+      rightEyeOpen: data.rightEyeOpen,
+      confidence: data.confidence,
+    );
+  }
+
+  /// Converts MLKit face data to overlay model.
+  /// ML Kit eye-landmark positions are raw pixel coords in the camera image.
+  /// The front-camera preview is mirrored, so flip X.
+  MLKitData _mapMlkitForOverlay(MLKitFaceData data, Size imageSize) {
+    Offset? gaze;
+    if (data.gazeEstimate != null) {
+      final g = data.gazeEstimate!;
+      // g is in normalized [0,1] from mlkit_service; convert to mirrored px
+      gaze = Offset(
+        (1.0 - g.dx) * imageSize.width,
+        g.dy * imageSize.height,
+      );
+    }
+
+    return MLKitData(
+      gazeEstimate: gaze,
+      headYaw: data.headYaw,
+      headPitch: data.headPitch,
+      headRoll: data.headRoll,
+      faceBounds: data.faceBounds,
+      leftEyeOpenProbability: data.leftEyeOpenProbability,
+      rightEyeOpenProbability: data.rightEyeOpenProbability,
+      confidence: data.confidence,
+    );
   }
 
   @override
@@ -435,27 +654,26 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     final region = _regions[_currentGridIndex];
     const borderColor = Colors.tealAccent;
 
-    // Calculate fused gaze for overlay
-    Offset? fusedGaze;
-    if (_currentMediaPipeData != null &&
-        _currentMediaPipeData!.leftEyeOpen &&
-        _currentMediaPipeData!.rightEyeOpen) {
-      fusedGaze = Offset(
-        (_currentMediaPipeData!.leftIrisCenter.dx +
-                _currentMediaPipeData!.rightIrisCenter.dx) /
-            2,
-        (_currentMediaPipeData!.leftIrisCenter.dy +
-                _currentMediaPipeData!.rightIrisCenter.dy) /
-            2,
-      );
-    }
-
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(title: const Text('Collection')),
+      appBar: AppBar(
+        title: const Text('Collection'),
+        actions: [
+          IconButton(
+            icon: Icon(_showEyeTrackingOverlay
+                ? Icons.visibility
+                : Icons.visibility_off),
+            onPressed: () {
+              setState(() {
+                _showEyeTrackingOverlay = !_showEyeTrackingOverlay;
+              });
+            },
+          ),
+        ],
+      ),
       body: Stack(
         children: [
-          if (_showCamera &&
+          if (_phase == ExperimentPhase.guidelines &&
               _cameraController != null &&
               _cameraController!.value.isInitialized)
             Center(
@@ -483,7 +701,24 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: CameraPreview(_cameraController!),
+                      child: Stack(
+                        children: [
+                          CameraPreview(_cameraController!),
+                          if (_showEyeTrackingOverlay &&
+                              _overlayMediaPipeData != null)
+                            Positioned.fill(
+                              child: EyeTrackingOverlay(
+                                mediapipeData: _overlayMediaPipeData,
+                                mlkitData: _overlayMLKitData,
+                                cameraSize: _cameraImageSize != Size.zero
+                                    ? _cameraImageSize
+                                    : const Size(320, 240),
+                                showDebugInfo:
+                                    _phase == ExperimentPhase.guidelines,
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                   // Alignment guide lines (crosshair)
@@ -499,15 +734,6 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                   ),
                 ],
               ),
-            ),
-          // Eye tracking overlay (only show during data collection)
-          if (_phase != ExperimentPhase.guidelines)
-            EyeTrackingOverlay(
-              mediapipeData: _currentMediaPipeData,
-              mlkitData: _currentMLKitData,
-              azureData: _currentAzureData,
-              fusedGaze: fusedGaze,
-              showOverlay: true,
             ),
           Align(
             alignment: _regions[_colorIndex % _regions.length].alignment,
@@ -547,6 +773,49 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                   ),
                 const SizedBox(height: 12),
                 if (_phase == ExperimentPhase.guidelines) ...[
+                  // Eye detection status indicator
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: _currentMediaPipeData != null
+                            ? Colors.greenAccent
+                            : Colors.redAccent,
+                        width: 2,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _currentMediaPipeData != null
+                              ? Icons.visibility
+                              : Icons.visibility_off,
+                          color: _currentMediaPipeData != null
+                              ? Colors.greenAccent
+                              : Colors.redAccent,
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _currentMediaPipeData != null
+                              ? 'Eyes detected ✓  (green dots on preview)'
+                              : 'Eyes not detected — adjust position',
+                          style: TextStyle(
+                            color: _currentMediaPipeData != null
+                                ? Colors.greenAccent
+                                : Colors.redAccent,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -584,6 +853,56 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
               ],
             ),
           ),
+          // ── Thank-you overlay (shown when experiment finishes) ──────────────
+          if (_phase == ExperimentPhase.done)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withOpacity(0.92),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.check_circle_outline,
+                        color: Colors.tealAccent, size: 80),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Thank You!',
+                      style: Theme.of(context)
+                          .textTheme
+                          .displaySmall
+                          ?.copyWith(
+                            color: Colors.tealAccent,
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Session complete.\nYour data has been saved.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Colors.white70,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Participant: ${widget.args.profile.name}',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.white38,
+                          ),
+                    ),
+                    const SizedBox(height: 40),
+                    const CircularProgressIndicator(
+                        color: Colors.tealAccent, strokeWidth: 2),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Returning to home…',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: Colors.white38,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -664,3 +983,4 @@ class _GuidePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+

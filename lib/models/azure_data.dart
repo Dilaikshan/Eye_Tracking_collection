@@ -19,12 +19,19 @@ class AzureData {
 
   Map<String, dynamic> toMap() {
     return {
-      'leftPupil': {'x': leftPupil.dx, 'y': leftPupil.dy},
-      'rightPupil': {'x': rightPupil.dx, 'y': rightPupil.dy},
-      'headPose': headPose,
-      'eyeGaze': eyeGaze,
+      'detected': true,
       'confidence': confidence,
       'latencyMs': latencyMs,
+      'leftPupil': {
+        'pixelX': leftPupil.dx,
+        'pixelY': leftPupil.dy,
+      },
+      'rightPupil': {
+        'pixelX': rightPupil.dx,
+        'pixelY': rightPupil.dy,
+      },
+      'headPose': headPose,
+      'eyeGaze': eyeGaze,
     };
   }
 }

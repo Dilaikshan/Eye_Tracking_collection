@@ -41,13 +41,17 @@ class MLKitService {
       final leftEye = face.landmarks[FaceLandmarkType.leftEye];
       final rightEye = face.landmarks[FaceLandmarkType.rightEye];
 
+      final imgW = image.width.toDouble();
+      final imgH = image.height.toDouble();
+
       Offset? gazeEstimate;
       if (leftEye != null && rightEye != null) {
-        final eyeCenter = Offset(
-          (leftEye.position.x + rightEye.position.x) / 2,
-          (leftEye.position.y + rightEye.position.y) / 2,
+        // Normalized [0,1] eye center
+        final eyeCenterNorm = Offset(
+          ((leftEye.position.x + rightEye.position.x) / 2) / imgW,
+          ((leftEye.position.y + rightEye.position.y) / 2) / imgH,
         );
-        gazeEstimate = _estimateGazeFromHeadPose(eyeCenter, headYaw, headPitch);
+        gazeEstimate = _estimateGazeFromHeadPose(eyeCenterNorm, headYaw, headPitch);
       }
 
       _isProcessing = false;
@@ -68,10 +72,14 @@ class MLKitService {
     }
   }
 
-  Offset _estimateGazeFromHeadPose(Offset eyeCenter, double yaw, double pitch) {
-    final xOffset = yaw * 0.05;
-    final yOffset = pitch * 0.05;
-    return Offset(eyeCenter.dx + xOffset, eyeCenter.dy + yOffset);
+  Offset _estimateGazeFromHeadPose(Offset eyeCenterNorm, double yaw, double pitch) {
+    // Normalized space: 1 degree of yaw ≈ 0.003 offset in [0,1] space
+    final xOffset = yaw * 0.003;
+    final yOffset = pitch * 0.003;
+    return Offset(
+      (eyeCenterNorm.dx + xOffset).clamp(0.0, 1.0),
+      (eyeCenterNorm.dy + yOffset).clamp(0.0, 1.0),
+    );
   }
 
   InputImage _convertCameraImage(CameraImage image, InputImageRotation rotation) {

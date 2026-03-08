@@ -6,7 +6,8 @@ import 'package:eye_tracking_collection/models/azure_data.dart';
 class EyeTrackingSample {
   final String sampleId;
   final DateTime timestamp;
-  final Offset target;
+  final Offset targetPixel;
+  final Offset targetNormalized;
   final String mode;
   final String colorLabel;
   final String? speedLabel;
@@ -22,7 +23,8 @@ class EyeTrackingSample {
   const EyeTrackingSample({
     required this.sampleId,
     required this.timestamp,
-    required this.target,
+    required this.targetPixel,
+    required this.targetNormalized,
     required this.mode,
     required this.colorLabel,
     this.speedLabel,
@@ -38,7 +40,12 @@ class EyeTrackingSample {
     return {
       'sampleId': sampleId,
       'timestamp': timestamp.millisecondsSinceEpoch,
-      'target': {'x': target.dx, 'y': target.dy},
+      'target': {
+        'pixelX': targetPixel.dx,
+        'pixelY': targetPixel.dy,
+        'normalizedX': targetNormalized.dx,
+        'normalizedY': targetNormalized.dy,
+      },
       'mode': mode,
       'colorLabel': colorLabel,
       if (speedLabel != null) 'speedLabel': speedLabel,

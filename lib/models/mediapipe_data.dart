@@ -23,14 +23,30 @@ class MediaPipeData {
 
   Map<String, dynamic> toMap() {
     return {
-      'leftIris': leftIrisLandmarks.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
-      'rightIris':
-          rightIrisLandmarks.map((p) => {'x': p.dx, 'y': p.dy}).toList(),
-      'leftPupil': {'x': leftPupilCenter.dx, 'y': leftPupilCenter.dy},
-      'rightPupil': {'x': rightPupilCenter.dx, 'y': rightPupilCenter.dy},
+      'detected': true,
+      'confidence': confidence,
+      'leftIris': leftIrisLandmarks
+          .map((p) => {
+                'pixelX': p.dx,
+                'pixelY': p.dy,
+              })
+          .toList(),
+      'rightIris': rightIrisLandmarks
+          .map((p) => {
+                'pixelX': p.dx,
+                'pixelY': p.dy,
+              })
+          .toList(),
+      'leftPupilCenter': {
+        'pixelX': leftPupilCenter.dx,
+        'pixelY': leftPupilCenter.dy,
+      },
+      'rightPupilCenter': {
+        'pixelX': rightPupilCenter.dx,
+        'pixelY': rightPupilCenter.dy,
+      },
       'leftEyeOpen': leftEyeOpen,
       'rightEyeOpen': rightEyeOpen,
-      'confidence': confidence,
       'faceLandmarkCount': faceLandmarkCount,
     };
   }

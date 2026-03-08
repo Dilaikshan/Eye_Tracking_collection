@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 class AppColors {
   static const Color background = Color(0xFF121212);
   static const Color surface = Color(0xFF1E1E1E);
-  static const Color primary = Color(0xFF00BCD4);
-  static const Color accent = Color(0xFF64FFDA);
+  static const Color primary = Color(0xFF5E0668);
+  static const Color accent = Color(0xFF791085);
 
   // High contrast colors for targets (for partially blind users)
   static const Color targetRed = Color(0xFFFF0000);

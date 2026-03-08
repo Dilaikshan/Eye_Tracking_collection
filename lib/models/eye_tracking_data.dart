@@ -72,15 +72,22 @@ class EyeTrackingData {
 
 /// MediaPipe Iris tracking data
 class MediaPipeIrisData {
+  /// Normalized [0,1] iris center coordinates (for data recording)
   final Offset leftIrisCenter;
   final Offset rightIrisCenter;
   final Offset leftPupilCenter;
   final Offset rightPupilCenter;
-  final List<Offset> leftIrisLandmarks; // 5 points per iris
+  final List<Offset> leftIrisLandmarks; // 5 normalized points per iris
   final List<Offset> rightIrisLandmarks;
   final double confidence;
   final bool leftEyeOpen;
   final bool rightEyeOpen;
+
+  /// Raw pixel coordinates in camera image space (for camera preview overlay)
+  final Offset? rawLeftIrisCenterPx;
+  final Offset? rawRightIrisCenterPx;
+  final double imageWidth;
+  final double imageHeight;
 
   MediaPipeIrisData({
     required this.leftIrisCenter,
@@ -92,6 +99,10 @@ class MediaPipeIrisData {
     required this.confidence,
     required this.leftEyeOpen,
     required this.rightEyeOpen,
+    this.rawLeftIrisCenterPx,
+    this.rawRightIrisCenterPx,
+    this.imageWidth = 0,
+    this.imageHeight = 0,
   });
 
   Map<String, dynamic> toMap() {
