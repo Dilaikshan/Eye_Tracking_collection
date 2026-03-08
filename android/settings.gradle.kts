@@ -25,4 +25,14 @@ plugins {
     id("org.jetbrains.kotlin.android") version "2.1.0" apply false
 }
 
+// In android/settings.gradle.kts
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        // ADD THIS:
+        maven { url = uri("https://seeso.jfrog.io/artifactory/visualcamp-seeso-android-gradle-release/") }
+    }
+}
+
 include(":app")

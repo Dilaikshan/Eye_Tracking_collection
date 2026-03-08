@@ -89,6 +89,32 @@ class MediaPipeIrisData {
   final double imageWidth;
   final double imageHeight;
 
+  // ── CNN Research Fields ────────────────────────────────────────────────────
+
+  /// 64x64 grayscale JPEG of each eye, base64-encoded (null if extraction failed)
+  final String? leftEyeCropBase64;
+  final String? rightEyeCropBase64;
+
+  /// Eye Aspect Ratio (float) – use EAR > 0.2 to determine open/closed
+  final double leftEAR;
+  final double rightEAR;
+
+  /// Iris Z-depth from FaceMesh (raw value from MediaPipe)
+  final double leftIrisDepth;
+  final double rightIrisDepth;
+
+  /// Interpupillary distance normalized by image width
+  final double ipdNormalized;
+
+  /// Eye corner landmarks, normalized [0,1]
+  final Offset leftEyeInnerCorner;
+  final Offset leftEyeOuterCorner;
+  final Offset rightEyeInnerCorner;
+  final Offset rightEyeOuterCorner;
+
+  /// Full face bounding box, normalized [0,1]
+  final Rect? faceBox;
+
   MediaPipeIrisData({
     required this.leftIrisCenter,
     required this.rightIrisCenter,
@@ -103,6 +129,19 @@ class MediaPipeIrisData {
     this.rawRightIrisCenterPx,
     this.imageWidth = 0,
     this.imageHeight = 0,
+    // CNN fields
+    this.leftEyeCropBase64,
+    this.rightEyeCropBase64,
+    this.leftEAR = 0.0,
+    this.rightEAR = 0.0,
+    this.leftIrisDepth = 0.0,
+    this.rightIrisDepth = 0.0,
+    this.ipdNormalized = 0.0,
+    this.leftEyeInnerCorner = Offset.zero,
+    this.leftEyeOuterCorner = Offset.zero,
+    this.rightEyeInnerCorner = Offset.zero,
+    this.rightEyeOuterCorner = Offset.zero,
+    this.faceBox,
   });
 
   Map<String, dynamic> toMap() {
@@ -114,6 +153,33 @@ class MediaPipeIrisData {
       'confidence': confidence,
       'leftEyeOpen': leftEyeOpen,
       'rightEyeOpen': rightEyeOpen,
+      // CNN research fields
+      if (leftEyeCropBase64 != null) 'leftEyeCrop': leftEyeCropBase64,
+      if (rightEyeCropBase64 != null) 'rightEyeCrop': rightEyeCropBase64,
+      'leftEAR': leftEAR,
+      'rightEAR': rightEAR,
+      'leftIrisDepth': leftIrisDepth,
+      'rightIrisDepth': rightIrisDepth,
+      'ipdNormalized': ipdNormalized,
+      'eyeCorners': {
+        'leftInner': {'x': leftEyeInnerCorner.dx, 'y': leftEyeInnerCorner.dy},
+        'leftOuter': {'x': leftEyeOuterCorner.dx, 'y': leftEyeOuterCorner.dy},
+        'rightInner': {
+          'x': rightEyeInnerCorner.dx,
+          'y': rightEyeInnerCorner.dy,
+        },
+        'rightOuter': {
+          'x': rightEyeOuterCorner.dx,
+          'y': rightEyeOuterCorner.dy,
+        },
+      },
+      if (faceBox != null)
+        'faceBox': {
+          'left': faceBox!.left,
+          'top': faceBox!.top,
+          'right': faceBox!.right,
+          'bottom': faceBox!.bottom,
+        },
     };
   }
 }

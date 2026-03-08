@@ -12,6 +12,8 @@ import 'package:eye_tracking_collection/models/mediapipe_data.dart';
 import 'package:eye_tracking_collection/models/mlkit_data.dart';
 import 'package:eye_tracking_collection/models/azure_data.dart';
 import 'package:eye_tracking_collection/models/eye_tracking_sample.dart';
+import 'package:eye_tracking_collection/screens/diagnostic_screen.dart';
+import 'package:eye_tracking_collection/screens/session_summary_screen.dart';
 import 'package:eye_tracking_collection/services/firestore_service.dart';
 import 'package:eye_tracking_collection/services/mediapipe_service.dart';
 import 'package:eye_tracking_collection/services/mlkit_service.dart';
@@ -109,6 +111,17 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   int _lineStepIndex = 0;
   bool _showCamera = true;
 
+  // ── Quality bar & sample counter ────────────────────────────────────────────
+  int _totalSamplesCollected = 0;
+  double _lastConfidence = 0.0;
+  double _lastLeftEAR    = 0.0;
+  double _lastRightEAR   = 0.0;
+  double _lastIPD        = 0.0;
+  int    _blinkCount     = 0;
+
+  // ── Diagnostic gate ──────────────────────────────────────────────────────────
+  bool _diagnosticsPassed = false;
+
   @override
   void initState() {
     super.initState();
@@ -125,8 +138,12 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
       );
-      _cameraController =
-          CameraController(front, ResolutionPreset.low, enableAudio: false);
+      _cameraController = CameraController(
+        front,
+        ResolutionPreset.low,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420, // Explicit YUV for NV21
+      );
       await _cameraController!.initialize();
       if (!mounted) return;
 
@@ -189,6 +206,36 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   }
 
   Future<void> _bootstrapSession() async {
+    // ── Step 1: Diagnostics gate ───────────────────────────────────────────────
+    if (!_diagnosticsPassed) {
+      // Stop camera stream before opening diagnostic screen
+      // (only one camera can be open at a time on most devices)
+      try { await _cameraController?.stopImageStream(); } catch (_) {}
+      try { await _cameraController?.dispose(); } catch (_) {}
+      _cameraController = null;
+
+      final passed = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          builder: (_) => DiagnosticScreen(
+            onPassed: () => Navigator.of(context).pop(true),
+          ),
+        ),
+      );
+
+      // Reinitialise camera after returning from diagnostics
+      if (mounted) await _initCamera();
+
+      if (!mounted) return;
+      if (passed != true) {
+        // User closed diagnostics without passing – stay on guidelines phase
+        setState(() {});
+        return;
+      }
+      _diagnosticsPassed = true;
+    }
+
+    // ── Step 2: Start session & speak guidelines ──────────────────────────────
+    if (!mounted) return;
     final size = MediaQuery.of(context).size;
     _sessionId = await _firestore.startSession(
       profile: widget.args.profile,
@@ -344,9 +391,22 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       _flushSamples();
       _tts.speak('Session complete. Thank you for participating.');
       setState(() {});
-      // Navigate back to home after 4 seconds
-      Future.delayed(const Duration(seconds: 4), () {
-        if (mounted) {
+      // Navigate to session summary after 3 seconds
+      Future.delayed(const Duration(seconds: 3), () {
+        if (!mounted) return;
+        if (_sessionId != null) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => SessionSummaryScreen(
+                args: SessionSummaryArgs(
+                  sessionId: _sessionId!,
+                  profile: widget.args.profile,
+                  languageCode: widget.args.languageCode,
+                ),
+              ),
+            ),
+          );
+        } else {
           Navigator.of(context).popUntil((route) => route.isFirst);
         }
       });
@@ -450,6 +510,23 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         rightEyeOpen: mp.rightEyeOpen,
         confidence: mp.confidence,
         faceLandmarkCount: 478,
+        // CNN research fields – pass through from MediaPipeIrisData
+        leftEyeCropBase64:   mp.leftEyeCropBase64,
+        rightEyeCropBase64:  mp.rightEyeCropBase64,
+        leftEAR:             mp.leftEAR,
+        rightEAR:            mp.rightEAR,
+        leftIrisDepth:       mp.leftIrisDepth,
+        rightIrisDepth:      mp.rightIrisDepth,
+        ipdNormalized:       mp.ipdNormalized,
+        leftEyeInnerCorner:  Offset(mp.leftEyeInnerCorner.dx  * imgW, mp.leftEyeInnerCorner.dy  * imgH),
+        leftEyeOuterCorner:  Offset(mp.leftEyeOuterCorner.dx  * imgW, mp.leftEyeOuterCorner.dy  * imgH),
+        rightEyeInnerCorner: Offset(mp.rightEyeInnerCorner.dx * imgW, mp.rightEyeInnerCorner.dy * imgH),
+        rightEyeOuterCorner: Offset(mp.rightEyeOuterCorner.dx * imgW, mp.rightEyeOuterCorner.dy * imgH),
+        faceBox: mp.faceBox != null
+            ? Rect.fromLTRB(
+                mp.faceBox!.left   * imgW, mp.faceBox!.top    * imgH,
+                mp.faceBox!.right  * imgW, mp.faceBox!.bottom * imgH)
+            : null,
       );
     }
 
@@ -540,10 +617,22 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         'conf=${overallConf.toStringAsFixed(2)} '
         'mediapipe=${mediapipeData != null} '
         'mlkit=${mlkitData != null} '
+        'EAR L=${mediapipeData?.leftEAR.toStringAsFixed(3)} R=${mediapipeData?.rightEAR.toStringAsFixed(3)} '
+        'IPD=${mediapipeData?.ipdNormalized.toStringAsFixed(3)} '
         'leftPupil=(${mediapipeData?.leftPupilCenter.dx.toStringAsFixed(1)}, '
         '${mediapipeData?.leftPupilCenter.dy.toStringAsFixed(1)})');
 
     _pendingSamples.add(sample.toFirestore());
+
+    // Update quality bar state
+    _totalSamplesCollected++;
+    _lastConfidence = overallConf;
+    if (mediapipeData != null) {
+      _lastLeftEAR  = mediapipeData.leftEAR;
+      _lastRightEAR = mediapipeData.rightEAR;
+      _lastIPD      = mediapipeData.ipdNormalized;
+    }
+    if (blink) _blinkCount++;
 
     if (_pendingSamples.length >= CollectionConstants.batchSize) {
       _flushSamples();
@@ -771,6 +860,12 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                           ),
                     ),
                   ),
+                // ── Real-time quality bar ──────────────────────────────────────
+                if (_phase != ExperimentPhase.guidelines &&
+                    _phase != ExperimentPhase.done) ...[
+                  const SizedBox(height: 6),
+                  _buildQualityBar(),
+                ],
                 const SizedBox(height: 12),
                 if (_phase == ExperimentPhase.guidelines) ...[
                   // Eye detection status indicator
@@ -903,6 +998,42 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQualityBar() {
+    final confColor = _lastConfidence >= 0.8
+        ? Colors.greenAccent
+        : _lastConfidence >= 0.5
+            ? Colors.orangeAccent
+            : Colors.redAccent;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: confColor, width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'EAR: L=${_lastLeftEAR.toStringAsFixed(2)} '
+            'R=${_lastRightEAR.toStringAsFixed(2)}  '
+            '│  IPD: ${_lastIPD.toStringAsFixed(3)}  '
+            '│  Conf: ${(_lastConfidence * 100).toStringAsFixed(0)}%  '
+            '│  Blinks: $_blinkCount  '
+            '│  Samples: $_totalSamplesCollected',
+            style: TextStyle(
+              color: confColor,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'monospace',
+            ),
+          ),
         ],
       ),
     );

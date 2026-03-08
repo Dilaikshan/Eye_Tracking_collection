@@ -130,34 +130,57 @@ class DataCollectionService {
   }
 
   MediaPipeData _mapMediaPipeResult(MediaPipeIrisData data) {
-    final width = data.imageWidth == 0 ? 1 : data.imageWidth;
-    final height = data.imageHeight == 0 ? 1 : data.imageHeight;
+    final width  = data.imageWidth  == 0 ? 1.0 : data.imageWidth;
+    final height = data.imageHeight == 0 ? 1.0 : data.imageHeight;
 
-    List<Offset> _scalePoints(List<Offset> points) {
-      return points
-          .map((p) => Offset(p.dx * width, p.dy * height))
-          .toList(growable: false);
-    }
+    List<Offset> _scalePoints(List<Offset> points) => points
+        .map((p) => Offset(p.dx * width, p.dy * height))
+        .toList(growable: false);
 
-    final leftIris = _scalePoints(data.leftIrisLandmarks);
-    final rightIris = _scalePoints(data.rightIrisLandmarks);
+    final leftIris   = _scalePoints(data.leftIrisLandmarks);
+    final rightIris  = _scalePoints(data.rightIrisLandmarks);
 
-    final leftPupil = data.rawLeftIrisCenterPx ??
-        Offset(
-            data.leftPupilCenter.dx * width, data.leftPupilCenter.dy * height);
+    final leftPupil  = data.rawLeftIrisCenterPx ??
+        Offset(data.leftPupilCenter.dx  * width, data.leftPupilCenter.dy  * height);
     final rightPupil = data.rawRightIrisCenterPx ??
-        Offset(data.rightPupilCenter.dx * width,
-            data.rightPupilCenter.dy * height);
+        Offset(data.rightPupilCenter.dx * width, data.rightPupilCenter.dy * height);
+
+    // Scale eye corners from normalized [0,1] → pixel space
+    Offset _scaleCorner(Offset norm) =>
+        Offset(norm.dx * width, norm.dy * height);
+
+    // Scale face box from normalized [0,1] → pixel space
+    final faceBoxPx = data.faceBox != null
+        ? Rect.fromLTRB(
+            data.faceBox!.left   * width,
+            data.faceBox!.top    * height,
+            data.faceBox!.right  * width,
+            data.faceBox!.bottom * height,
+          )
+        : null;
 
     return MediaPipeData(
-      leftIrisLandmarks: leftIris,
+      leftIrisLandmarks:  leftIris,
       rightIrisLandmarks: rightIris,
-      leftPupilCenter: leftPupil,
-      rightPupilCenter: rightPupil,
-      leftEyeOpen: data.leftEyeOpen,
-      rightEyeOpen: data.rightEyeOpen,
-      confidence: data.confidence,
-      faceLandmarkCount: 468,
+      leftPupilCenter:    leftPupil,
+      rightPupilCenter:   rightPupil,
+      leftEyeOpen:        data.leftEyeOpen,
+      rightEyeOpen:       data.rightEyeOpen,
+      confidence:         data.confidence,
+      faceLandmarkCount:  478,
+      // CNN research fields
+      leftEyeCropBase64:   data.leftEyeCropBase64,
+      rightEyeCropBase64:  data.rightEyeCropBase64,
+      leftEAR:             data.leftEAR,
+      rightEAR:            data.rightEAR,
+      leftIrisDepth:       data.leftIrisDepth,
+      rightIrisDepth:      data.rightIrisDepth,
+      ipdNormalized:       data.ipdNormalized,
+      leftEyeInnerCorner:  _scaleCorner(data.leftEyeInnerCorner),
+      leftEyeOuterCorner:  _scaleCorner(data.leftEyeOuterCorner),
+      rightEyeInnerCorner: _scaleCorner(data.rightEyeInnerCorner),
+      rightEyeOuterCorner: _scaleCorner(data.rightEyeOuterCorner),
+      faceBox:             faceBoxPx,
     );
   }
 
