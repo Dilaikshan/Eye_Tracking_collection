@@ -41,11 +41,11 @@ class _PulsingTargetState extends State<PulsingTarget>
         width: 48,
         height: 48,
         decoration: BoxDecoration(
-          color: widget.color ?? AppColors.target,
+          color: widget.color ?? AppColors.targetYellow,
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-              color: (widget.color ?? AppColors.target).withOpacity(0.9),
+              color: (widget.color ?? AppColors.targetYellow).withOpacity(0.9),
               blurRadius: 18,
               spreadRadius: 4,
             ),

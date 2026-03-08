@@ -13,7 +13,7 @@ class AppTheme {
         background: AppColors.background,
         surface: AppColors.surface,
         primary: AppColors.accent,
-        secondary: AppColors.target,
+        secondary: AppColors.targetYellow,
       ),
       textTheme: const TextTheme(
         headlineMedium: TextStyle(

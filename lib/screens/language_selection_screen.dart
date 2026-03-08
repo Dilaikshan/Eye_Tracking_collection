@@ -10,7 +10,8 @@ class LanguageSelectionScreen extends StatefulWidget {
   static const String routeName = '/language';
 
   @override
-  State<LanguageSelectionScreen> createState() => _LanguageSelectionScreenState();
+  State<LanguageSelectionScreen> createState() =>
+      _LanguageSelectionScreenState();
 }
 
 class _LanguageSelectionScreenState extends State<LanguageSelectionScreen> {
@@ -35,7 +36,18 @@ class _LanguageSelectionScreenState extends State<LanguageSelectionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Choose Language')),
+      appBar: AppBar(
+        title: const Text('Choose Language'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.admin_panel_settings),
+            onPressed: () {
+              Navigator.pushNamed(context, '/admin-login');
+            },
+            tooltip: 'Admin Login',
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(

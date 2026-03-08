@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image/image.dart' as img;
-import 'package:google_mlkit_face_mesh_detection/google_mlkit_face_mesh_detection.dart';
+import 'package:google_mlkit_commons/google_mlkit_commons.dart';
+import 'package:eye_tracking_collection/models/azure_data.dart';
 
 class AzureFaceService {
   static String get endpoint => dotenv.env['AZURE_FACE_ENDPOINT'] ?? '';
@@ -15,12 +16,8 @@ class AzureFaceService {
   DateTime _lastRequestTime = DateTime.now();
   static const int maxRequestsPerMinute = 20;
 
-  bool get isEnabled => endpoint.isNotEmpty && apiKey.isNotEmpty;
-
-  // bool get isEnabled => endpoint.isNotEmpty && apiKey.isNotEmpty;
-
-  Future<AzureFaceData?> processImage(InputImage inputImage) async {
-    if (!isEnabled || !_canMakeRequest() || _isProcessing) return null;
+  Future<AzureData?> processImage(InputImage inputImage) async {
+    if (!_canMakeRequest() || _isProcessing) return null;
 
     _isProcessing = true;
     final startTime = DateTime.now();
@@ -34,22 +31,24 @@ class AzureFaceService {
       }
 
       // Call Azure Face API
-      final response = await http.post(
-        Uri.parse('$endpoint/face/v1.0/detect').replace(
-          queryParameters: {
-            'returnFaceId': 'false',
-            'returnFaceLandmarks': 'true',
-            'returnFaceAttributes': 'headPose',
-            'recognitionModel': 'recognition_04',
-            'detectionModel': 'detection_03',
-          },
-        ),
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'Ocp-Apim-Subscription-Key': apiKey,
-        },
-        body: jpegBytes,
-      ).timeout(const Duration(seconds: 5));
+      final response = await http
+          .post(
+            Uri.parse('$endpoint/face/v1.0/detect').replace(
+              queryParameters: {
+                'returnFaceId': 'false',
+                'returnFaceLandmarks': 'true',
+                'returnFaceAttributes': 'headPose',
+                'recognitionModel': 'recognition_04',
+                'detectionModel': 'detection_03',
+              },
+            ),
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'Ocp-Apim-Subscription-Key': apiKey,
+            },
+            body: jpegBytes,
+          )
+          .timeout(const Duration(seconds: 5));
 
       final latency = DateTime.now().difference(startTime).inMilliseconds;
       _requestCount++;
@@ -66,13 +65,11 @@ class AzureFaceService {
         final face = data.first as Map<String, dynamic>;
         _isProcessing = false;
         return _parseResponse(face, latency);
-
       } else {
         debugPrint('Azure error ${response.statusCode}: ${response.body}');
         _isProcessing = false;
         return null;
       }
-
     } catch (e) {
       debugPrint('Azure exception: $e');
       _isProcessing = false;
@@ -90,7 +87,7 @@ class AzureFaceService {
     return _requestCount < maxRequestsPerMinute;
   }
 
-  AzureFaceData _parseResponse(Map<String, dynamic> face, int latency) {
+  AzureData _parseResponse(Map<String, dynamic> face, int latency) {
     final landmarks = face['faceLandmarks'] as Map<String, dynamic>?;
 
     Offset leftPupil = Offset.zero;
@@ -118,7 +115,7 @@ class AzureFaceService {
     final attributes = face['faceAttributes'] as Map<String, dynamic>?;
     final headPose = attributes?['headPose'] as Map<String, dynamic>? ?? {};
 
-    return AzureFaceData(
+    return AzureData(
       leftPupil: leftPupil,
       rightPupil: rightPupil,
       headPose: headPose,
@@ -145,39 +142,9 @@ class AzureFaceService {
       // Encode as JPEG
       final jpeg = img.encodeJpg(convertedImage, quality: 85);
       return Uint8List.fromList(jpeg);
-
     } catch (e) {
       debugPrint('Image conversion error: $e');
       return null;
     }
-  }
-}
-
-class AzureFaceData {
-  final Offset leftPupil;
-  final Offset rightPupil;
-  final Map<String, dynamic> headPose;
-  final Map<String, dynamic> eyeGaze;
-  final double confidence;
-  final int latencyMs;
-
-  const AzureFaceData({
-    required this.leftPupil,
-    required this.rightPupil,
-    required this.headPose,
-    required this.eyeGaze,
-    required this.confidence,
-    required this.latencyMs,
-  });
-
-  Map<String, dynamic> toMap() {
-    return {
-      'leftPupil': {'x': leftPupil.dx, 'y': leftPupil.dy},
-      'rightPupil': {'x': rightPupil.dx, 'y': rightPupil.dy},
-      'headPose': headPose,
-      'eyeGaze': eyeGaze,
-      'confidence': confidence,
-      'latencyMs': latencyMs,
-    };
   }
 }

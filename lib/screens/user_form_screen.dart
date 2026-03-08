@@ -1,4 +1,3 @@
-import 'package:eye_tracking_collection/core/constants/app_strings.dart';
 import 'package:eye_tracking_collection/models/user_profile.dart';
 import 'package:eye_tracking_collection/widgets/accessible_text_field.dart';
 import 'package:eye_tracking_collection/widgets/primary_button.dart';
@@ -34,11 +33,16 @@ class _UserFormScreenState extends State<UserFormScreen> {
       age: age,
       blindnessType: _blindnessType,
       languageCode: widget.languageCode,
+      dominantEye: 'both',
+      visionAcuity: 5,
+      wearsGlasses: false,
+      consentGiven: true,
     );
     Navigator.pushNamed(
       context,
       CollectionGridScreen.routeName,
-      arguments: CollectionGridArgs(profile: profile, languageCode: widget.languageCode),
+      arguments: CollectionGridArgs(
+          profile: profile, languageCode: widget.languageCode),
     );
   }
 
@@ -52,7 +56,8 @@ class _UserFormScreenState extends State<UserFormScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(AppStrings.formHint(lang), style: Theme.of(context).textTheme.bodyLarge),
+            Text('Please enter your details to continue.',
+                style: Theme.of(context).textTheme.bodyLarge),
             const SizedBox(height: 16),
             AccessibleTextField(
               controller: _nameController,
@@ -73,16 +78,21 @@ class _UserFormScreenState extends State<UserFormScreen> {
                 'Glaucoma',
                 'Diabetic Retinopathy',
                 'Cataracts',
-              ].map((value) => DropdownMenuItem(value: value, child: Text(value))).toList(),
+              ]
+                  .map((value) =>
+                      DropdownMenuItem(value: value, child: Text(value)))
+                  .toList(),
               onChanged: (value) {
                 if (value != null) {
                   setState(() => _blindnessType = value);
                 }
               },
-              decoration: const InputDecoration(labelText: 'Partial Blind Type'),
+              decoration:
+                  const InputDecoration(labelText: 'Partial Blind Type'),
             ),
             const Spacer(),
-            PrimaryButton(label: 'Start Collection', onPressed: _startCollection),
+            PrimaryButton(
+                label: 'Start Collection', onPressed: _startCollection),
           ],
         ),
       ),
