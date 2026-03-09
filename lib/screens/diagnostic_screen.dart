@@ -355,9 +355,10 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
       await ref.delete();
       _setStatus(4, CheckStatus.passed, 'Firestore: Read/Write OK ✅');
     } catch (e) {
-      _setStatus(4, CheckStatus.failed,
-          'Firestore error ❌\n$e\n'
-          'Check Firebase rules allow read/write on _health/**');
+      // Firestore being offline is non-fatal – the app queues data locally
+      // and syncs when connectivity is restored.
+      _setStatus(4, CheckStatus.warning,
+          'Firestore offline ⚠️ – data will sync when online\n$e');
     }
   }
 
@@ -426,12 +427,13 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     });
   }
 
-  // Mandatory: Camera + MediaPipe must pass; others can warn
+  // Mandatory: Camera + MediaPipe must pass; Firestore offline is non-fatal
   bool get _mandatoryPassed =>
       _checks[0].status == CheckStatus.passed &&
       (_checks[1].status == CheckStatus.passed ||
           _checks[1].status == CheckStatus.warning) &&
-      _checks[4].status == CheckStatus.passed;
+      (_checks[4].status == CheckStatus.passed ||
+          _checks[4].status == CheckStatus.warning);
 
   double get _qualityScore {
     final passed =

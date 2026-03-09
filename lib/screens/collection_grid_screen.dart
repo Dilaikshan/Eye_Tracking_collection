@@ -64,6 +64,12 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   Timer? _timer;
   CameraController? _cameraController;
 
+  // Time to wait after DiagnosticScreen closes before re-opening the camera.
+  // DiagnosticScreen.dispose() calls stopImageStream/dispose without await
+  // (unavoidable in Flutter), so we need to give the OS enough time to fully
+  // release the camera hardware. 500 ms is sufficient on most Android devices.
+  static const Duration _cameraReleaseDelay = Duration(milliseconds: 500);
+
   final List<Alignment> _gridPositions = const [
     Alignment.topLeft,
     Alignment.topCenter,
@@ -126,14 +132,21 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   void initState() {
     super.initState();
     _regions = _buildRegions();
+    // Do NOT call _initCamera() here. _bootstrapSession() manages the full
+    // camera lifecycle: it disposes the camera before opening DiagnosticScreen
+    // and reinitialises it afterward. Calling _initCamera() here as well would
+    // race with DiagnosticScreen's own camera initialisation, causing
+    // "camera already in use" errors on most Android devices.
     WidgetsBinding.instance.addPostFrameCallback((_) => _bootstrapSession());
-    _initCamera();
   }
 
   Future<void> _initCamera() async {
     try {
       final cameras = await availableCameras();
-      if (cameras.isEmpty) return;
+      if (cameras.isEmpty) {
+        debugPrint('⚠️ _initCamera: no cameras available');
+        return;
+      }
       final front = cameras.firstWhere(
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
@@ -151,8 +164,9 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       _startCameraStream();
 
       setState(() {});
-    } catch (_) {
-      // ignore camera setup errors in dev
+    } catch (e) {
+      debugPrint('❌ _initCamera error: $e');
+      if (mounted) setState(() {});
     }
   }
 
@@ -222,7 +236,9 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         ),
       );
 
-      // Reinitialise camera after returning from diagnostics
+      // Give the OS a moment to fully release the camera from DiagnosticScreen
+      // before we try to re-open it here.
+      await Future.delayed(_cameraReleaseDelay);
       if (mounted) await _initCamera();
 
       if (!mounted) return;
