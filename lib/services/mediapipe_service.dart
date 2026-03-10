@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
@@ -16,17 +15,18 @@ class MediaPipeService {
   // ── Landmark index constants ────────────────────────────────────────────────
 
   // Iris landmarks (MediaPipe 478-point model)
-  static const int _leftIrisStart = 468;   // 468-472 (5 points)
-  static const int _rightIrisStart = 473;  // 473-477 (5 points)
+  static const int _leftIrisStart = 468; // 468-472 (5 points)
+  static const int _rightIrisStart = 473; // 473-477 (5 points)
+  static const int _minFaceMeshPoints = 468;
 
   // Eye corners
-  static const int _leftEyeInner = 133;   // right corner of left eye (inner)
-  static const int _leftEyeOuter = 33;    // left corner of left eye (outer)
-  static const int _rightEyeInner = 362;  // left corner of right eye (inner)
-  static const int _rightEyeOuter = 263;  // right corner of right eye (outer)
+  static const int _leftEyeInner = 133; // right corner of left eye (inner)
+  static const int _leftEyeOuter = 33; // left corner of left eye (outer)
+  static const int _rightEyeInner = 362; // left corner of right eye (inner)
+  static const int _rightEyeOuter = 263; // right corner of right eye (outer)
 
   // EAR landmarks – left eye: p1=33, p2=160, p3=158, p4=133, p5=153, p6=144
-  static const List<int> _leftEarIdx  = [33, 160, 158, 133, 153, 144];
+  static const List<int> _leftEarIdx = [33, 160, 158, 133, 153, 144];
   // EAR landmarks – right eye: p1=362, p2=385, p3=387, p4=263, p5=380, p6=373
   static const List<int> _rightEarIdx = [362, 385, 387, 263, 380, 373];
 
@@ -42,11 +42,17 @@ class MediaPipeService {
 
     try {
       final faces = await _detector!.processImage(inputImage);
-      if (faces.isEmpty) { _isProcessing = false; return null; }
+      if (faces.isEmpty) {
+        _isProcessing = false;
+        return null;
+      }
 
       final face = faces.first;
       final meshPoints = face.points;
-      if (meshPoints.length < 478) { _isProcessing = false; return null; }
+      if (meshPoints.length < _minFaceMeshPoints) {
+        _isProcessing = false;
+        return null;
+      }
 
       final imgW = inputImage.metadata?.size.width.toDouble() ?? 1.0;
       final imgH = inputImage.metadata?.size.height.toDouble() ?? 1.0;
@@ -88,11 +94,17 @@ class MediaPipeService {
     try {
       final inputImage = _convertCameraImageToNV21(image, rotation);
       final faces = await _detector!.processImage(inputImage);
-      if (faces.isEmpty) { _isProcessing = false; return null; }
+      if (faces.isEmpty) {
+        _isProcessing = false;
+        return null;
+      }
 
       final face = faces.first;
       final meshPoints = face.points;
-      if (meshPoints.length < 478) { _isProcessing = false; return null; }
+      if (meshPoints.length < _minFaceMeshPoints) {
+        _isProcessing = false;
+        return null;
+      }
 
       final imgW = image.width.toDouble();
       final imgH = image.height.toDouble();
@@ -127,29 +139,33 @@ class MediaPipeService {
     CameraImage? imageForCrop,
   }) {
     // 1. Iris pixel positions
-    final leftIrisPixels  = _extractIrisPixels(meshPoints, isLeft: true);
+    final leftIrisPixels = _extractIrisPixels(meshPoints, isLeft: true);
     final rightIrisPixels = _extractIrisPixels(meshPoints, isLeft: false);
 
-    final leftIrisCenterPx  = _calculateCenter(leftIrisPixels);
+    final leftIrisCenterPx = _calculateCenter(leftIrisPixels);
     final rightIrisCenterPx = _calculateCenter(rightIrisPixels);
 
     // Normalize to [0,1]
-    final leftIrisNorm  = Offset(leftIrisCenterPx.dx / imgW,  leftIrisCenterPx.dy / imgH);
-    final rightIrisNorm = Offset(rightIrisCenterPx.dx / imgW, rightIrisCenterPx.dy / imgH);
+    final leftIrisNorm =
+        Offset(leftIrisCenterPx.dx / imgW, leftIrisCenterPx.dy / imgH);
+    final rightIrisNorm =
+        Offset(rightIrisCenterPx.dx / imgW, rightIrisCenterPx.dy / imgH);
 
-    final leftIrisNormPoints  = leftIrisPixels.map((p)  => Offset(p.dx / imgW, p.dy / imgH)).toList();
-    final rightIrisNormPoints = rightIrisPixels.map((p) => Offset(p.dx / imgW, p.dy / imgH)).toList();
+    final leftIrisNormPoints =
+        leftIrisPixels.map((p) => Offset(p.dx / imgW, p.dy / imgH)).toList();
+    final rightIrisNormPoints =
+        rightIrisPixels.map((p) => Offset(p.dx / imgW, p.dy / imgH)).toList();
 
     // 2. EAR (float)
-    final leftEAR  = _computeEAR(meshPoints, _leftEarIdx);
+    final leftEAR = _computeEAR(meshPoints, _leftEarIdx);
     final rightEAR = _computeEAR(meshPoints, _rightEarIdx);
 
     // 3. Eye open from EAR
-    final leftEyeOpen  = leftEAR  > 0.2;
+    final leftEyeOpen = leftEAR > 0.2;
     final rightEyeOpen = rightEAR > 0.2;
 
     // 4. Iris Z-depth
-    final leftIrisDepth  = meshPoints.length > _leftIrisStart + 4
+    final leftIrisDepth = meshPoints.length > _leftIrisStart + 4
         ? meshPoints[_leftIrisStart + 4].z.toDouble()
         : 0.0;
     final rightIrisDepth = meshPoints.length > _rightIrisStart + 4
@@ -163,8 +179,8 @@ class MediaPipeService {
     final ipdNormalized = imgW > 0 ? ipdPx / imgW : 0.0;
 
     // 6. Eye corners (normalized)
-    final leftInner  = _normPoint(meshPoints, _leftEyeInner,  imgW, imgH);
-    final leftOuter  = _normPoint(meshPoints, _leftEyeOuter,  imgW, imgH);
+    final leftInner = _normPoint(meshPoints, _leftEyeInner, imgW, imgH);
+    final leftOuter = _normPoint(meshPoints, _leftEyeOuter, imgW, imgH);
     final rightInner = _normPoint(meshPoints, _rightEyeInner, imgW, imgH);
     final rightOuter = _normPoint(meshPoints, _rightEyeOuter, imgW, imgH);
 
@@ -176,7 +192,7 @@ class MediaPipeService {
     String? rightCropB64;
     if (imageForCrop != null) {
       try {
-        leftCropB64  = _extractEyeCrop(imageForCrop, meshPoints, isLeft: true);
+        leftCropB64 = _extractEyeCrop(imageForCrop, meshPoints, isLeft: true);
         rightCropB64 = _extractEyeCrop(imageForCrop, meshPoints, isLeft: false);
       } catch (e) {
         debugPrint('⚠️ Eye crop extraction failed: $e');
@@ -222,13 +238,16 @@ class MediaPipeService {
   // idx: [p1, p2, p3, p4, p5, p6]
   double _computeEAR(List<FaceMeshPoint> pts, List<int> idx) {
     try {
-      final p1 = pts[idx[0]]; final p2 = pts[idx[1]];
-      final p3 = pts[idx[2]]; final p4 = pts[idx[3]];
-      final p5 = pts[idx[4]]; final p6 = pts[idx[5]];
+      final p1 = pts[idx[0]];
+      final p2 = pts[idx[1]];
+      final p3 = pts[idx[2]];
+      final p4 = pts[idx[3]];
+      final p5 = pts[idx[4]];
+      final p6 = pts[idx[5]];
 
       final v1 = _dist2(p2, p6);
       final v2 = _dist2(p3, p5);
-      final h  = _dist2(p1, p4);
+      final h = _dist2(p1, p4);
 
       if (h < 1e-9) return 0.0;
       return (v1 + v2) / (2.0 * h);
@@ -282,7 +301,7 @@ class MediaPipeService {
     try {
       // Landmarks that define the eye region
       final eyeLandmarks = isLeft
-          ? [33, 133, 159, 145, 160, 144, 158, 153]  // left eye
+          ? [33, 133, 159, 145, 160, 144, 158, 153] // left eye
           : [362, 263, 386, 374, 385, 380, 387, 373]; // right eye
 
       double minX = double.maxFinite, maxX = -double.maxFinite;
@@ -307,17 +326,19 @@ class MediaPipeService {
 
       final cropX = (minX - padX).clamp(0.0, camImage.width.toDouble() - 1);
       final cropY = (minY - padY).clamp(0.0, camImage.height.toDouble() - 1);
-      final cropW = ((bboxW + 2 * padX)).clamp(1.0, camImage.width.toDouble() - cropX);
-      final cropH = ((bboxH + 2 * padY)).clamp(1.0, camImage.height.toDouble() - cropY);
+      final cropW =
+          ((bboxW + 2 * padX)).clamp(1.0, camImage.width.toDouble() - cropX);
+      final cropH =
+          ((bboxH + 2 * padY)).clamp(1.0, camImage.height.toDouble() - cropY);
 
       // Decode YUV (NV21) to RGB using the `image` package
       final yPlane = camImage.planes[0];
-      final imgWidth  = camImage.width;
+      final imgWidth = camImage.width;
       final imgHeight = camImage.height;
 
       // Build a grayscale image directly from the Y-plane (luma channel)
-      final grayImage = img.Image(width: imgWidth, height: imgHeight,
-          numChannels: 1);
+      final grayImage =
+          img.Image(width: imgWidth, height: imgHeight, numChannels: 1);
 
       final yBytes = yPlane.bytes;
       final rowStride = yPlane.bytesPerRow;
@@ -341,8 +362,8 @@ class MediaPipeService {
       );
 
       // Resize to 64×64
-      final resized = img.copyResize(cropped, width: 64, height: 64,
-          interpolation: img.Interpolation.linear);
+      final resized = img.copyResize(cropped,
+          width: 64, height: 64, interpolation: img.Interpolation.linear);
 
       // Encode as JPEG
       final jpegBytes = img.encodeJpg(resized, quality: 85);
@@ -364,13 +385,42 @@ class MediaPipeService {
         irisPoints.add(Offset(pt.x.toDouble(), pt.y.toDouble()));
       }
     }
-    return irisPoints;
+
+    if (irisPoints.isNotEmpty) return irisPoints;
+
+    return _extractFallbackEyePoints(meshPoints, isLeft: isLeft);
+  }
+
+  List<Offset> _extractFallbackEyePoints(List<FaceMeshPoint> meshPoints,
+      {required bool isLeft}) {
+    final candidates = isLeft
+        ? const [33, 133, 159, 145, 158]
+        : const [362, 263, 386, 374, 387];
+
+    final points = <Offset>[];
+    for (final index in candidates) {
+      if (index < meshPoints.length) {
+        final pt = meshPoints[index];
+        points.add(Offset(pt.x.toDouble(), pt.y.toDouble()));
+      }
+    }
+
+    if (points.length >= 5) {
+      return points.take(5).toList(growable: false);
+    }
+
+    if (points.isEmpty) return points;
+    final center = _calculateCenter(points);
+    return List<Offset>.filled(5, center, growable: false);
   }
 
   Offset _calculateCenter(List<Offset> points) {
     if (points.isEmpty) return Offset.zero;
     double sumX = 0, sumY = 0;
-    for (final pt in points) { sumX += pt.dx; sumY += pt.dy; }
+    for (final pt in points) {
+      sumX += pt.dx;
+      sumY += pt.dy;
+    }
     return Offset(sumX / points.length, sumY / points.length);
   }
 
@@ -379,7 +429,7 @@ class MediaPipeService {
   /// Handles both single-plane devices (already NV21) and multi-plane YUV_420_888.
   InputImage _convertCameraImageToNV21(
       CameraImage image, InputImageRotation rotation) {
-    final int width  = image.width;
+    final int width = image.width;
     final int height = image.height;
 
     // Single-plane: device already outputs NV21 — use directly
@@ -400,8 +450,8 @@ class MediaPipeService {
     final Uint8List uBytes = image.planes[1].bytes;
     final Uint8List vBytes = image.planes[2].bytes;
 
-    final int yRowStride    = image.planes[0].bytesPerRow;
-    final int uvRowStride   = image.planes[1].bytesPerRow;
+    final int yRowStride = image.planes[0].bytesPerRow;
+    final int uvRowStride = image.planes[1].bytesPerRow;
     final int uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
 
     final Uint8List nv21 = Uint8List(width * height * 3 ~/ 2);
@@ -417,7 +467,7 @@ class MediaPipeService {
 
     // Interleave V then U (NV21 = VU order)
     final int uvHeight = height ~/ 2;
-    final int uvWidth  = width  ~/ 2;
+    final int uvWidth = width ~/ 2;
     for (int row = 0; row < uvHeight; row++) {
       for (int col = 0; col < uvWidth; col++) {
         final int uvOff = row * uvRowStride + col * uvPixelStride;
