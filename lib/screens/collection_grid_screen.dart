@@ -126,7 +126,9 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   int    _blinkCount     = 0;
 
   // ── Diagnostic gate ──────────────────────────────────────────────────────────
-  bool _diagnosticsPassed = false;
+  // Diagnostic screen is temporarily skipped for the prototype.
+  // Set to true so the gate is bypassed and the camera/session starts directly.
+  bool _diagnosticsPassed = true;
 
   @override
   void initState() {
@@ -221,6 +223,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
   Future<void> _bootstrapSession() async {
     // ── Step 1: Diagnostics gate ───────────────────────────────────────────────
+    // Diagnostic screen is temporarily skipped (_diagnosticsPassed starts true).
+    // The camera is initialised directly here so eye data collection still works.
     if (!_diagnosticsPassed) {
       // Stop camera stream before opening diagnostic screen
       // (only one camera can be open at a time on most devices)
@@ -248,6 +252,10 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         return;
       }
       _diagnosticsPassed = true;
+    } else {
+      // Diagnostic screen bypassed – initialise camera directly.
+      await _initCamera();
+      if (!mounted) return;
     }
 
     // ── Step 2: Start session & speak guidelines ──────────────────────────────
