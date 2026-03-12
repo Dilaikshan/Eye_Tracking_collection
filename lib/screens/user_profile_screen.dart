@@ -21,18 +21,15 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _ageController = TextEditingController();
 
-  String _blindnessType = 'Macular Degeneration';
+  String _blindnessType = 'Myopia';
   String _dominantEye = 'both';
   int _visionAcuity = 5;
   bool _wearsGlasses = false;
   bool _consentGiven = false;
 
   final List<String> _blindnessTypes = [
-    'Macular Degeneration',
-    'Glaucoma',
-    'Diabetic Retinopathy',
-    'Cataracts (Partial)',
-    'Other',
+    'Myopia',
+    'Cataract',
   ];
 
   @override

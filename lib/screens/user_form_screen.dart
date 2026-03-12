@@ -17,7 +17,7 @@ class UserFormScreen extends StatefulWidget {
 class _UserFormScreenState extends State<UserFormScreen> {
   final _nameController = TextEditingController();
   final _ageController = TextEditingController();
-  String _blindnessType = 'Macular Degeneration';
+  String _blindnessType = 'Myopia';
 
   @override
   void dispose() {
@@ -74,10 +74,8 @@ class _UserFormScreenState extends State<UserFormScreen> {
               value: _blindnessType,
               dropdownColor: Colors.black,
               items: const [
-                'Macular Degeneration',
-                'Glaucoma',
-                'Diabetic Retinopathy',
-                'Cataracts',
+                'Myopia',
+                'Cataract',
               ]
                   .map((value) =>
                       DropdownMenuItem(value: value, child: Text(value)))
