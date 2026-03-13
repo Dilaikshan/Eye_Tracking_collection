@@ -15,6 +15,7 @@ import 'package:eye_tracking_collection/models/eye_tracking_sample.dart';
 import 'package:eye_tracking_collection/screens/diagnostic_screen.dart';
 import 'package:eye_tracking_collection/screens/session_summary_screen.dart';
 import 'package:eye_tracking_collection/services/firestore_service.dart';
+import 'package:eye_tracking_collection/services/eye_crop_service.dart';
 import 'package:eye_tracking_collection/services/mediapipe_service.dart';
 import 'package:eye_tracking_collection/services/mlkit_service.dart';
 import 'package:eye_tracking_collection/widgets/pulsing_target.dart';
@@ -92,6 +93,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   // Current eye tracking data (raw from camera stream)
   MediaPipeIrisData? _currentMediaPipeData;
   MLKitFaceData? _currentMLKitData;
+  CameraImage? _latestCameraImage;
 
   MediaPipeData? _overlayMediaPipeData;
   MLKitData? _overlayMLKitData;
@@ -120,10 +122,10 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   // ── Quality bar & sample counter ────────────────────────────────────────────
   int _totalSamplesCollected = 0;
   double _lastConfidence = 0.0;
-  double _lastLeftEAR    = 0.0;
-  double _lastRightEAR   = 0.0;
-  double _lastIPD        = 0.0;
-  int    _blinkCount     = 0;
+  double _lastLeftEAR = 0.0;
+  double _lastRightEAR = 0.0;
+  double _lastIPD = 0.0;
+  int _blinkCount = 0;
 
   // ── Diagnostic gate ──────────────────────────────────────────────────────────
   // Diagnostic screen is temporarily skipped for the prototype.
@@ -193,6 +195,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       // Always update – the overlay needs fresh data every frame
       if (mounted) {
         _cameraImageSize = imageSize;
+        _latestCameraImage = image;
         _currentMediaPipeData = newMp;
         _currentMLKitData = newMl;
         _overlayMediaPipeData =
@@ -228,8 +231,12 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     if (!_diagnosticsPassed) {
       // Stop camera stream before opening diagnostic screen
       // (only one camera can be open at a time on most devices)
-      try { await _cameraController?.stopImageStream(); } catch (_) {}
-      try { await _cameraController?.dispose(); } catch (_) {}
+      try {
+        await _cameraController?.stopImageStream();
+      } catch (_) {}
+      try {
+        await _cameraController?.dispose();
+      } catch (_) {}
       _cameraController = null;
 
       final passed = await Navigator.of(context).push<bool>(
@@ -386,8 +393,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
     // Collect samples every 200ms during the 1.5s visible window
     Timer? pulseSampler;
-    pulseSampler =
-        Timer.periodic(const Duration(milliseconds: 200), (_) {
+    pulseSampler = Timer.periodic(const Duration(milliseconds: 200), (_) {
       _recordSample(mode: ExperimentMode.pulse, region: region);
     });
 
@@ -495,10 +501,10 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     });
   }
 
-  void _recordSample(
+  Future<void> _recordSample(
       {required ExperimentMode mode,
       required _ColorRegion region,
-      String? speedLabel}) {
+      String? speedLabel}) async {
     final targetNormalized = _alignmentToNormalized(region.alignment);
     final screenSize = MediaQuery.of(context).size;
     final targetPixel = Offset(
@@ -508,6 +514,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
     // Build MediaPipeData from current raw iris data (pixel coords)
     MediaPipeData? mediapipeData;
+    Offset? leftIrisCenterNorm;
+    Offset? rightIrisCenterNorm;
     if (_currentMediaPipeData != null) {
       final mp = _currentMediaPipeData!;
       final imgW = mp.imageWidth == 0 ? 1.0 : mp.imageWidth;
@@ -525,6 +533,15 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       final rightPupilPx = mp.rawRightIrisCenterPx ??
           Offset(mp.rightPupilCenter.dx * imgW, mp.rightPupilCenter.dy * imgH);
 
+      leftIrisCenterNorm = Offset(
+        (leftPupilPx.dx / imgW).clamp(0.0, 1.0),
+        (leftPupilPx.dy / imgH).clamp(0.0, 1.0),
+      );
+      rightIrisCenterNorm = Offset(
+        (rightPupilPx.dx / imgW).clamp(0.0, 1.0),
+        (rightPupilPx.dy / imgH).clamp(0.0, 1.0),
+      );
+
       mediapipeData = MediaPipeData(
         leftIrisLandmarks: leftIrisPixels,
         rightIrisLandmarks: rightIrisPixels,
@@ -535,21 +552,24 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         confidence: mp.confidence,
         faceLandmarkCount: 478,
         // CNN research fields – pass through from MediaPipeIrisData
-        leftEyeCropBase64:   mp.leftEyeCropBase64,
-        rightEyeCropBase64:  mp.rightEyeCropBase64,
-        leftEAR:             mp.leftEAR,
-        rightEAR:            mp.rightEAR,
-        leftIrisDepth:       mp.leftIrisDepth,
-        rightIrisDepth:      mp.rightIrisDepth,
-        ipdNormalized:       mp.ipdNormalized,
-        leftEyeInnerCorner:  Offset(mp.leftEyeInnerCorner.dx  * imgW, mp.leftEyeInnerCorner.dy  * imgH),
-        leftEyeOuterCorner:  Offset(mp.leftEyeOuterCorner.dx  * imgW, mp.leftEyeOuterCorner.dy  * imgH),
-        rightEyeInnerCorner: Offset(mp.rightEyeInnerCorner.dx * imgW, mp.rightEyeInnerCorner.dy * imgH),
-        rightEyeOuterCorner: Offset(mp.rightEyeOuterCorner.dx * imgW, mp.rightEyeOuterCorner.dy * imgH),
+        leftEyeCropBase64: mp.leftEyeCropBase64,
+        rightEyeCropBase64: mp.rightEyeCropBase64,
+        leftEAR: mp.leftEAR,
+        rightEAR: mp.rightEAR,
+        leftIrisDepth: mp.leftIrisDepth,
+        rightIrisDepth: mp.rightIrisDepth,
+        ipdNormalized: mp.ipdNormalized,
+        leftEyeInnerCorner: Offset(
+            mp.leftEyeInnerCorner.dx * imgW, mp.leftEyeInnerCorner.dy * imgH),
+        leftEyeOuterCorner: Offset(
+            mp.leftEyeOuterCorner.dx * imgW, mp.leftEyeOuterCorner.dy * imgH),
+        rightEyeInnerCorner: Offset(
+            mp.rightEyeInnerCorner.dx * imgW, mp.rightEyeInnerCorner.dy * imgH),
+        rightEyeOuterCorner: Offset(
+            mp.rightEyeOuterCorner.dx * imgW, mp.rightEyeOuterCorner.dy * imgH),
         faceBox: mp.faceBox != null
-            ? Rect.fromLTRB(
-                mp.faceBox!.left   * imgW, mp.faceBox!.top    * imgH,
-                mp.faceBox!.right  * imgW, mp.faceBox!.bottom * imgH)
+            ? Rect.fromLTRB(mp.faceBox!.left * imgW, mp.faceBox!.top * imgH,
+                mp.faceBox!.right * imgW, mp.faceBox!.bottom * imgH)
             : null,
       );
     }
@@ -573,13 +593,20 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     // Quality assessment
     double totalConf = 0;
     int sources = 0;
-    if (mediapipeData != null) { totalConf += mediapipeData.confidence; sources++; }
-    if (mlkitData != null) { totalConf += mlkitData.confidence; sources++; }
+    if (mediapipeData != null) {
+      totalConf += mediapipeData.confidence;
+      sources++;
+    }
+    if (mlkitData != null) {
+      totalConf += mlkitData.confidence;
+      sources++;
+    }
     final overallConf = sources > 0 ? totalConf / sources : 0.0;
 
     // Skip sample if no eye data was detected at all
     if (sources == 0) {
-      debugPrint('[Sample] SKIPPED – no eye data available yet for ${region.label}');
+      debugPrint(
+          '[Sample] SKIPPED – no eye data available yet for ${region.label}');
       return;
     }
 
@@ -621,8 +648,31 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       'age': profile.age,
     };
 
+    final sampleId = _uuid.v4();
+
+    // Capture eye crops if we have iris coordinates and a camera frame.
+    String? leftCropUrl;
+    String? rightCropUrl;
+    if (_latestCameraImage != null &&
+        leftIrisCenterNorm != null &&
+        rightIrisCenterNorm != null) {
+      try {
+        final crops = await EyeCropService().captureAndUpload(
+          image: _latestCameraImage!,
+          leftIrisCenterNorm: leftIrisCenterNorm,
+          rightIrisCenterNorm: rightIrisCenterNorm,
+          sessionId: _sessionId ?? 'unknown',
+          sampleId: sampleId,
+        );
+        leftCropUrl = crops['leftCropUrl'];
+        rightCropUrl = crops['rightCropUrl'];
+      } catch (e) {
+        debugPrint('Eye crop capture failed for sample $sampleId: $e');
+      }
+    }
+
     final sample = EyeTrackingSample(
-      sampleId: _uuid.v4(),
+      sampleId: sampleId,
       timestamp: DateTime.now(),
       targetPixel: targetPixel,
       targetNormalized: targetNormalized,
@@ -635,6 +685,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       deviceInfo: deviceInfo,
       participantContext: participantContext,
       quality: quality,
+      leftEyeCropUrl: leftCropUrl,
+      rightEyeCropUrl: rightCropUrl,
     );
 
     debugPrint('[Sample] mode=${mode.name} color=${region.label} '
@@ -652,9 +704,9 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     _totalSamplesCollected++;
     _lastConfidence = overallConf;
     if (mediapipeData != null) {
-      _lastLeftEAR  = mediapipeData.leftEAR;
+      _lastLeftEAR = mediapipeData.leftEAR;
       _lastRightEAR = mediapipeData.rightEAR;
-      _lastIPD      = mediapipeData.ipdNormalized;
+      _lastIPD = mediapipeData.ipdNormalized;
     }
     if (blink) _blinkCount++;
 
@@ -705,8 +757,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         // raw pixel → mirror X
         return Offset(imageSize.width - rawPx.dx, rawPx.dy);
       }
-      return Offset(
-          (1.0 - normFallback.dx) * imageSize.width,
+      return Offset((1.0 - normFallback.dx) * imageSize.width,
           normFallback.dy * imageSize.height);
     }
 
@@ -985,10 +1036,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                     const SizedBox(height: 24),
                     Text(
                       'Thank You!',
-                      style: Theme.of(context)
-                          .textTheme
-                          .displaySmall
-                          ?.copyWith(
+                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
                             color: Colors.tealAccent,
                             fontWeight: FontWeight.bold,
                           ),
@@ -1138,4 +1186,3 @@ class _GuidePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
-

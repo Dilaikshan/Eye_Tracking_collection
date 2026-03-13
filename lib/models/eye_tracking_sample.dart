@@ -15,6 +15,8 @@ class EyeTrackingSample {
   final MediaPipeData? mediapipeData;
   final MLKitData? mlkitData;
   final AzureData? azureData;
+  final String? leftEyeCropUrl;
+  final String? rightEyeCropUrl;
 
   final Map<String, dynamic> deviceInfo;
   final Map<String, dynamic> participantContext;
@@ -31,6 +33,8 @@ class EyeTrackingSample {
     this.mediapipeData,
     this.mlkitData,
     this.azureData,
+    this.leftEyeCropUrl,
+    this.rightEyeCropUrl,
     required this.deviceInfo,
     required this.participantContext,
     required this.quality,
@@ -52,6 +56,8 @@ class EyeTrackingSample {
       if (mediapipeData != null) 'mediapipe': mediapipeData!.toMap(),
       if (mlkitData != null) 'mlkit': mlkitData!.toMap(),
       if (azureData != null) 'azure': azureData!.toMap(),
+      if (leftEyeCropUrl != null) 'leftEyeCropUrl': leftEyeCropUrl,
+      if (rightEyeCropUrl != null) 'rightEyeCropUrl': rightEyeCropUrl,
       'deviceInfo': deviceInfo,
       'participantContext': participantContext,
       'quality': quality,

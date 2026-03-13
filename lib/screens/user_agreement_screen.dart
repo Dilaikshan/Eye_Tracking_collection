@@ -21,8 +21,14 @@ class UserAgreementScreen extends StatelessWidget {
           children: [
             Text('Consent', style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 16),
-            Text(AppStrings.agreementFor(languageCode),
-                style: Theme.of(context).textTheme.bodyLarge),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Text(
+                  AppStrings.agreementFor(languageCode),
+                  style: Theme.of(context).textTheme.bodyLarge,
+                ),
+              ),
+            ),
             const Spacer(),
             PrimaryButton(
               label: 'I Agree',
