@@ -37,7 +37,7 @@ class CollectionGridArgs {
 
   factory CollectionGridArgs.empty() => CollectionGridArgs(
         profile: UserProfile(
-          name: 'Guest',
+          personId: 'P-GUEST',
           age: 0,
           blindnessType: 'Unknown',
           languageCode: 'en',
@@ -110,6 +110,12 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   bool _headSizeCalibrated = false;
   bool _headAligned = false;
   bool _alignmentManuallySet = false;
+  DateTime? _lastDetectionTime;
+  static const Duration _detectionHoldDuration = Duration(milliseconds: 600);
+  int _frameSkipCounter = 0;
+  static const int _frameSkipInterval = 3;
+  int _consecutiveDetectionFrames = 0;
+  static const int _autoAlignFrameThreshold = 20;
 
   // Timer tracking
   int _remainingSeconds = 0;
@@ -179,6 +185,13 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       return;
 
     _cameraController!.startImageStream((CameraImage image) async {
+      _frameSkipCounter++;
+      if (_frameSkipCounter % _frameSkipInterval != 0) {
+        // Skip this frame to reduce inference load while keeping latest image.
+        _latestCameraImage = image;
+        return;
+      }
+
       // Capture image dimensions before the async gap
       final imageSize = Size(image.width.toDouble(), image.height.toDouble());
       final rotation = _getImageRotation();
@@ -192,16 +205,45 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       final newMp = futures[0] as MediaPipeIrisData?;
       final newMl = futures[1] as MLKitFaceData?;
 
-      // Always update – the overlay needs fresh data every frame
       if (mounted) {
+        final now = DateTime.now();
         _cameraImageSize = imageSize;
         _latestCameraImage = image;
-        _currentMediaPipeData = newMp;
-        _currentMLKitData = newMl;
-        _overlayMediaPipeData =
-            newMp != null ? _mapMediaPipeForOverlay(newMp, imageSize) : null;
-        _overlayMLKitData =
-            newMl != null ? _mapMlkitForOverlay(newMl, imageSize) : null;
+
+        // Only update to non-null, or clear after hold-off period expires.
+        if (newMp != null) {
+          _currentMediaPipeData = newMp;
+          _lastDetectionTime = now;
+        } else if (_lastDetectionTime != null &&
+            now.difference(_lastDetectionTime!) > _detectionHoldDuration) {
+          _currentMediaPipeData = null;
+        }
+
+        if (newMl != null) {
+          _currentMLKitData = newMl;
+        }
+
+        if (newMp != null) {
+          _overlayMediaPipeData = _mapMediaPipeForOverlay(newMp, imageSize);
+        }
+        if (newMl != null) {
+          _overlayMLKitData = _mapMlkitForOverlay(newMl, imageSize);
+        }
+
+        if (_phase == ExperimentPhase.guidelines) {
+          if (_currentMediaPipeData != null) {
+            _consecutiveDetectionFrames++;
+            if (_consecutiveDetectionFrames >= _autoAlignFrameThreshold &&
+                !_headAligned) {
+              _headAligned = true;
+              _alignmentManuallySet = false;
+              _tts.speak('Face detected. You may start collection.');
+            }
+          } else {
+            _consecutiveDetectionFrames = 0;
+          }
+        }
+
         setState(() {});
       }
     });
@@ -350,11 +392,13 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
       }
     });
 
-    // Collect samples every 200ms throughout the full 2-second dwell
+    // 400ms onset delay for gaze to settle on target, then collect for 1.6s.
     _timer?.cancel();
     Timer? dwellSampler;
-    dwellSampler = Timer.periodic(const Duration(milliseconds: 200), (_) {
-      _recordSample(mode: ExperimentMode.calibration, region: region);
+    Timer(const Duration(milliseconds: 400), () {
+      dwellSampler = Timer.periodic(const Duration(milliseconds: 200), (_) {
+        _recordSample(mode: ExperimentMode.calibration, region: region);
+      });
     });
 
     Timer(const Duration(seconds: 2), () {
@@ -726,8 +770,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
   Future<void> _flushSamples() async {
     if (_sessionId == null || _pendingSamples.isEmpty) return;
-    final userId =
-        widget.args.profile.name.isEmpty ? 'guest' : widget.args.profile.name;
+    final userId = widget.args.profile.personId;
     await _firestore.addSamples(
       userId: userId,
       sessionId: _sessionId!,
@@ -912,6 +955,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
             left: 16,
             right: 16,
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(_statusText(),
                     textAlign: TextAlign.center,
@@ -1016,7 +1060,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                 ],
                 const SizedBox(height: 8),
                 Text(
-                  'Participant: ${widget.args.profile.name}, ${widget.args.profile.blindnessType}',
+                  'ID: ${widget.args.profile.personId}  |  ${widget.args.profile.blindnessType}',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
@@ -1051,7 +1095,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Participant: ${widget.args.profile.name}',
+                      'Participant ID: ${widget.args.profile.personId}',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: Colors.white38,
                           ),
@@ -1083,28 +1127,83 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
             : Colors.redAccent;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.black87,
         borderRadius: BorderRadius.circular(6),
         border: Border.all(color: confColor, width: 1),
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'EAR: L=${_lastLeftEAR.toStringAsFixed(2)} '
-            'R=${_lastRightEAR.toStringAsFixed(2)}  '
-            '│  IPD: ${_lastIPD.toStringAsFixed(3)}  '
-            '│  Conf: ${(_lastConfidence * 100).toStringAsFixed(0)}%  '
-            '│  Blinks: $_blinkCount  '
-            '│  Samples: $_totalSamplesCollected',
-            style: TextStyle(
-              color: confColor,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              fontFamily: 'monospace',
-            ),
+          // Row 1: EAR + IPD + Confidence
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'L-EAR: ${_lastLeftEAR.toStringAsFixed(2)}',
+                style: TextStyle(
+                  color: confColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              Text(
+                'R-EAR: ${_lastRightEAR.toStringAsFixed(2)}',
+                style: TextStyle(
+                  color: confColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              Text(
+                'IPD: ${_lastIPD.toStringAsFixed(3)}',
+                style: TextStyle(
+                  color: confColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              Text(
+                'Conf: ${(_lastConfidence * 100).toStringAsFixed(0)}%',
+                style: TextStyle(
+                  color: confColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 3),
+          // Row 2: Blinks + Samples
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Blinks: $_blinkCount',
+                style: TextStyle(
+                  color: confColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+              Text(
+                'Samples: $_totalSamplesCollected',
+                style: TextStyle(
+                  color: confColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
           ),
         ],
       ),

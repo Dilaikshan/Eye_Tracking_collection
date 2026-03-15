@@ -18,7 +18,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
   final TtsService _tts = TtsService();
 
   // Form controllers
-  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _ageController = TextEditingController();
 
   String _blindnessType = 'Myopia';
@@ -58,8 +57,11 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
       return;
     }
 
+    final personId =
+        'P-${DateTime.now().millisecondsSinceEpoch.toRadixString(16).toUpperCase().substring(4)}';
+
     final profile = UserProfile(
-      name: _nameController.text.trim(),
+      personId: personId,
       age: int.parse(_ageController.text),
       blindnessType: _blindnessType,
       dominantEye: _dominantEye,
@@ -84,7 +86,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
 
   @override
   void dispose() {
-    _nameController.dispose();
     _ageController.dispose();
     _tts.dispose();
     super.dispose();
@@ -106,18 +107,6 @@ class _UserProfileScreenState extends State<UserProfileScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildTextField(
-                  controller: _nameController,
-                  label: 'Name',
-                  hint: 'Enter your name',
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Please enter your name';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 20),
                 _buildTextField(
                   controller: _ageController,
                   label: 'Age',

@@ -13,7 +13,7 @@ class FirestoreService {
   }) async {
     try {
       final sessionRef = await _firestore.collection('sessions').add({
-        'userId': profile.name,
+        'userId': profile.personId,
         'participantProfile': profile.toMap(),
         'screenSize': {
           'width': screenSize.width,

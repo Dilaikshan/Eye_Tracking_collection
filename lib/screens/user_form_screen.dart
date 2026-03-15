@@ -15,21 +15,21 @@ class UserFormScreen extends StatefulWidget {
 }
 
 class _UserFormScreenState extends State<UserFormScreen> {
-  final _nameController = TextEditingController();
   final _ageController = TextEditingController();
   String _blindnessType = 'Myopia';
 
   @override
   void dispose() {
-    _nameController.dispose();
     _ageController.dispose();
     super.dispose();
   }
 
   void _startCollection() {
+    final personId =
+        'P-${DateTime.now().millisecondsSinceEpoch.toRadixString(16).toUpperCase().substring(4)}';
     final age = int.tryParse(_ageController.text.trim()) ?? 0;
     final profile = UserProfile(
-      name: _nameController.text.trim(),
+      personId: personId,
       age: age,
       blindnessType: _blindnessType,
       languageCode: widget.languageCode,
@@ -58,11 +58,6 @@ class _UserFormScreenState extends State<UserFormScreen> {
           children: [
             Text('Please enter your details to continue.',
                 style: Theme.of(context).textTheme.bodyLarge),
-            const SizedBox(height: 16),
-            AccessibleTextField(
-              controller: _nameController,
-              label: 'Name',
-            ),
             const SizedBox(height: 16),
             AccessibleTextField(
               controller: _ageController,

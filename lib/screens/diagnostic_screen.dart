@@ -50,6 +50,10 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
   MLKitData? _overlayMl;
   Size _cameraImageSize = const Size(320, 240);
   bool _streamRunning = false;
+  DateTime? _lastMpDetectionTime;
+  static const Duration _detectionHoldDuration = Duration(milliseconds: 600);
+  int _frameSkipCounter = 0;
+  static const int _frameSkipInterval = 3;
 
   // Track whether camera init is complete so checks don't race it
   bool _cameraReady = false;
@@ -116,6 +120,11 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     _streamRunning = true;
 
     _cameraController!.startImageStream((CameraImage image) async {
+      _frameSkipCounter++;
+      if (_frameSkipCounter % _frameSkipInterval != 0) {
+        return;
+      }
+
       final imageSize = Size(image.width.toDouble(), image.height.toDouble());
 
       // Use correct rotation for front camera on Android.
@@ -131,12 +140,24 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
       final newMp = futures[0] as MediaPipeIrisData?;
       final newMl = futures[1] as MLKitFaceData?;
       if (!mounted) return;
+
+      final now = DateTime.now();
       setState(() {
         _cameraImageSize = imageSize;
-        _liveMediaPipe = newMp;
+        if (newMp != null) {
+          _liveMediaPipe = newMp;
+          _lastMpDetectionTime = now;
+        } else if (_lastMpDetectionTime != null &&
+            now.difference(_lastMpDetectionTime!) > _detectionHoldDuration) {
+          _liveMediaPipe = null;
+        }
         _liveMlKit = newMl;
-        _overlayMp = newMp != null ? _toOverlayMp(newMp, imageSize) : null;
-        _overlayMl = newMl != null ? _toOverlayMl(newMl, imageSize) : null;
+        if (newMp != null) {
+          _overlayMp = _toOverlayMp(newMp, imageSize);
+        }
+        if (newMl != null) {
+          _overlayMl = _toOverlayMl(newMl, imageSize);
+        }
       });
     });
   }
@@ -148,34 +169,37 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     // For front-facing cameras on Android, CameraX/camera plugin
     // already accounts for the front mirror, so we pass the sensor angle.
     switch (sensorOrientation) {
-      case 90:  return InputImageRotation.rotation90deg;
-      case 180: return InputImageRotation.rotation180deg;
-      case 270: return InputImageRotation.rotation270deg;
-      default:  return InputImageRotation.rotation0deg;
+      case 90:
+        return InputImageRotation.rotation90deg;
+      case 180:
+        return InputImageRotation.rotation180deg;
+      case 270:
+        return InputImageRotation.rotation270deg;
+      default:
+        return InputImageRotation.rotation0deg;
     }
   }
 
   MediaPipeData _toOverlayMp(MediaPipeIrisData data, Size imageSize) {
     List<Offset> flip(List<Offset> pts) => pts
-        .map((p) => Offset(
-            (1.0 - p.dx) * imageSize.width, p.dy * imageSize.height))
+        .map((p) =>
+            Offset((1.0 - p.dx) * imageSize.width, p.dy * imageSize.height))
         .toList();
     Offset flipPupil(Offset? raw, Offset norm) => raw != null
         ? Offset(imageSize.width - raw.dx, raw.dy)
-        : Offset(
-            (1.0 - norm.dx) * imageSize.width, norm.dy * imageSize.height);
+        : Offset((1.0 - norm.dx) * imageSize.width, norm.dy * imageSize.height);
     return MediaPipeData(
-      leftIrisLandmarks:  flip(data.leftIrisLandmarks),
+      leftIrisLandmarks: flip(data.leftIrisLandmarks),
       rightIrisLandmarks: flip(data.rightIrisLandmarks),
       leftPupilCenter:
           flipPupil(data.rawLeftIrisCenterPx, data.leftPupilCenter),
       rightPupilCenter:
           flipPupil(data.rawRightIrisCenterPx, data.rightPupilCenter),
-      leftEyeOpen:   data.leftEyeOpen,
-      rightEyeOpen:  data.rightEyeOpen,
-      confidence:    data.confidence,
-      leftEAR:       data.leftEAR,
-      rightEAR:      data.rightEAR,
+      leftEyeOpen: data.leftEyeOpen,
+      rightEyeOpen: data.rightEyeOpen,
+      confidence: data.confidence,
+      leftEAR: data.leftEAR,
+      rightEAR: data.rightEAR,
       ipdNormalized: data.ipdNormalized,
     );
   }
@@ -184,16 +208,15 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     Offset? gaze;
     if (data.gazeEstimate != null) {
       final g = data.gazeEstimate!;
-      gaze = Offset(
-          (1.0 - g.dx) * imageSize.width, g.dy * imageSize.height);
+      gaze = Offset((1.0 - g.dx) * imageSize.width, g.dy * imageSize.height);
     }
     return MLKitData(
       gazeEstimate: gaze,
-      headYaw:   data.headYaw,
+      headYaw: data.headYaw,
       headPitch: data.headPitch,
-      headRoll:  data.headRoll,
+      headRoll: data.headRoll,
       faceBounds: data.faceBounds,
-      leftEyeOpenProbability:  data.leftEyeOpenProbability,
+      leftEyeOpenProbability: data.leftEyeOpenProbability,
       rightEyeOpenProbability: data.rightEyeOpenProbability,
       confidence: data.confidence,
     );
@@ -220,17 +243,19 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
 
     // Wait up to 5 seconds for camera to actually initialise
     final deadline = DateTime.now().add(const Duration(seconds: 5));
-    while (!_cameraReady && _cameraInitError == null &&
+    while (!_cameraReady &&
+        _cameraInitError == null &&
         DateTime.now().isBefore(deadline)) {
       await Future.delayed(const Duration(milliseconds: 200));
     }
 
     if (_cameraInitError != null) {
-      _setStatus(0, CheckStatus.failed,
-          'Camera init error: $_cameraInitError ❌');
+      _setStatus(
+          0, CheckStatus.failed, 'Camera init error: $_cameraInitError ❌');
       return;
     }
-    if (!_cameraReady || _cameraController == null ||
+    if (!_cameraReady ||
+        _cameraController == null ||
         !_cameraController!.value.isInitialized) {
       _setStatus(0, CheckStatus.failed,
           'Camera not ready after 5 s ❌ — check permissions');
@@ -248,11 +273,12 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
   }
 
   Future<void> _checkMediaPipe() async {
-    _setStatus(1, CheckStatus.running, 'Detecting face – please look at camera…');
+    _setStatus(
+        1, CheckStatus.running, 'Detecting face – please look at camera…');
 
     if (!_cameraReady) {
-      _setStatus(1, CheckStatus.failed,
-          'Camera not ready – fix camera check first ❌');
+      _setStatus(
+          1, CheckStatus.failed, 'Camera not ready – fix camera check first ❌');
       return;
     }
 
@@ -261,7 +287,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
 
     // Allow up to 8 seconds for first detection (model loading takes time)
     MediaPipeIrisData? result;
-    const pollMs  = 300;
+    const pollMs = 300;
     const maxWait = 8000;
     int waited = 0;
     while (waited < maxWait) {
@@ -272,14 +298,18 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     }
 
     if (result == null) {
-      _setStatus(1, CheckStatus.failed,
+      _setStatus(
+          1,
+          CheckStatus.failed,
           'No face detected after ${maxWait ~/ 1000} s ❌\n'
           '• Ensure camera permission is granted\n'
           '• Position face in front of camera\n'
           '• Ensure good lighting');
       return;
     }
-    _setStatus(1, CheckStatus.passed,
+    _setStatus(
+        1,
+        CheckStatus.passed,
         'Face detected ✅  conf=${result.confidence.toStringAsFixed(2)}  '
         'EAR L=${result.leftEAR.toStringAsFixed(2)} '
         'R=${result.rightEAR.toStringAsFixed(2)}');
@@ -322,7 +352,9 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     await Future.delayed(const Duration(milliseconds: 300));
     final ml = _liveMlKit;
     if (ml == null) {
-      _setStatus(3, CheckStatus.warning,
+      _setStatus(
+          3,
+          CheckStatus.warning,
           'ML Kit face not detected – head pose skipped ⚠️\n'
           'This is non-critical; collection still works');
       return;
@@ -351,7 +383,8 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
         'source': 'diagnostic_screen',
       });
       final snap = await ref.get();
-      if (!snap.exists) throw Exception('Write succeeded but read found nothing');
+      if (!snap.exists)
+        throw Exception('Write succeeded but read found nothing');
       await ref.delete();
       _setStatus(4, CheckStatus.passed, 'Firestore: Read/Write OK ✅');
     } catch (e) {
@@ -379,8 +412,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     await Future.delayed(const Duration(milliseconds: 300));
     final mp = _liveMediaPipe;
     if (mp == null) {
-      _setStatus(6, CheckStatus.warning,
-          'No face – cannot assess lighting ⚠️');
+      _setStatus(6, CheckStatus.warning, 'No face – cannot assess lighting ⚠️');
       return;
     }
     if (mp.confidence >= 0.85) {
@@ -398,8 +430,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     await Future.delayed(const Duration(milliseconds: 300));
     final mp = _liveMediaPipe;
     if (mp == null) {
-      _setStatus(7, CheckStatus.warning,
-          'No face data – skipped ⚠️');
+      _setStatus(7, CheckStatus.warning, 'No face data – skipped ⚠️');
       return;
     }
     final ipdPx = mp.ipdNormalized * _cameraImageSize.width;
@@ -407,10 +438,12 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
     String msg;
     if (ipdPx < 30) {
       cs = CheckStatus.warning;
-      msg = 'Possibly too far – move closer ⚠️ (IPD=${ipdPx.toStringAsFixed(0)}px)';
+      msg =
+          'Possibly too far – move closer ⚠️ (IPD=${ipdPx.toStringAsFixed(0)}px)';
     } else if (ipdPx > 150) {
       cs = CheckStatus.warning;
-      msg = 'Possibly too close – move back ⚠️ (IPD=${ipdPx.toStringAsFixed(0)}px)';
+      msg =
+          'Possibly too close – move back ⚠️ (IPD=${ipdPx.toStringAsFixed(0)}px)';
     } else {
       cs = CheckStatus.passed;
       msg = 'Good distance ✅ (IPD=${ipdPx.toStringAsFixed(0)}px)';
@@ -436,8 +469,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
           _checks[4].status == CheckStatus.warning);
 
   double get _qualityScore {
-    final passed =
-        _checks.where((c) => c.status == CheckStatus.passed).length;
+    final passed = _checks.where((c) => c.status == CheckStatus.passed).length;
     return passed / _checks.length;
   }
 
@@ -456,8 +488,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
           Container(
             width: double.infinity,
             color: AppColors.surface,
-            padding:
-                const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
             child: const Text(
               'Research: Assistive Eye-Tracking for Partially Blind Users  |  SEU/IS/19/ICT/047',
               style: TextStyle(
@@ -517,17 +548,16 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 3),
                       decoration: BoxDecoration(
-                        color: (_liveMediaPipe != null
-                                ? Colors.green
-                                : Colors.red)
-                            .withValues(alpha: 0.85),
+                        color:
+                            (_liveMediaPipe != null ? Colors.green : Colors.red)
+                                .withValues(alpha: 0.85),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Text(
                         _liveMediaPipe != null
                             ? '✅ Face detected  '
-                              'EAR L=${_liveMediaPipe!.leftEAR.toStringAsFixed(2)} '
-                              'R=${_liveMediaPipe!.rightEAR.toStringAsFixed(2)}'
+                                'EAR L=${_liveMediaPipe!.leftEAR.toStringAsFixed(2)} '
+                                'R=${_liveMediaPipe!.rightEAR.toStringAsFixed(2)}'
                             : '❌ No face – look at camera',
                         style: const TextStyle(
                             color: Colors.white,
@@ -552,8 +582,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
                           color: Colors.redAccent, fontSize: 11),
                     ),
                   ] else ...[
-                    const CircularProgressIndicator(
-                        color: Colors.tealAccent),
+                    const CircularProgressIndicator(color: Colors.tealAccent),
                     const SizedBox(height: 8),
                     const Text('Initializing camera…',
                         style: TextStyle(color: Colors.white54)),
@@ -565,7 +594,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
   }
 
   Widget _buildCheckTile(DiagnosticItem item) {
-    final icon  = _statusIcon(item.status);
+    final icon = _statusIcon(item.status);
     final color = _statusColor(item.status);
     return Card(
       color: AppColors.surface,
@@ -578,8 +607,7 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(item.detail,
-                style: TextStyle(color: color, fontSize: 11)),
+            Text(item.detail, style: TextStyle(color: color, fontSize: 11)),
             if (item.extraWidget != null) ...[
               const SizedBox(height: 4),
               item.extraWidget!,
@@ -599,9 +627,8 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
   }
 
   Widget _buildBottomBar() {
-    final score  = (_qualityScore * 100).toStringAsFixed(0);
-    final allRan =
-        _checks.every((c) => c.status != CheckStatus.pending);
+    final score = (_qualityScore * 100).toStringAsFixed(0);
+    final allRan = _checks.every((c) => c.status != CheckStatus.pending);
     return Container(
       color: AppColors.surface,
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
@@ -667,21 +694,31 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
 
   IconData _statusIcon(CheckStatus s) {
     switch (s) {
-      case CheckStatus.pending: return Icons.radio_button_unchecked;
-      case CheckStatus.running: return Icons.hourglass_empty;
-      case CheckStatus.passed:  return Icons.check_circle;
-      case CheckStatus.warning: return Icons.warning_amber;
-      case CheckStatus.failed:  return Icons.cancel;
+      case CheckStatus.pending:
+        return Icons.radio_button_unchecked;
+      case CheckStatus.running:
+        return Icons.hourglass_empty;
+      case CheckStatus.passed:
+        return Icons.check_circle;
+      case CheckStatus.warning:
+        return Icons.warning_amber;
+      case CheckStatus.failed:
+        return Icons.cancel;
     }
   }
 
   Color _statusColor(CheckStatus s) {
     switch (s) {
-      case CheckStatus.pending: return Colors.white38;
-      case CheckStatus.running: return Colors.tealAccent;
-      case CheckStatus.passed:  return Colors.greenAccent;
-      case CheckStatus.warning: return Colors.orangeAccent;
-      case CheckStatus.failed:  return Colors.redAccent;
+      case CheckStatus.pending:
+        return Colors.white38;
+      case CheckStatus.running:
+        return Colors.tealAccent;
+      case CheckStatus.passed:
+        return Colors.greenAccent;
+      case CheckStatus.warning:
+        return Colors.orangeAccent;
+      case CheckStatus.failed:
+        return Colors.redAccent;
     }
   }
 
@@ -736,5 +773,3 @@ class _CropPreviewWidget extends StatelessWidget {
     );
   }
 }
-
-

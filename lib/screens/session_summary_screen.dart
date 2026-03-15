@@ -39,8 +39,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
   }
 
   Future<void> _loadStats() async {
-    final stats =
-        await _exportService.getSessionStats(widget.args.sessionId);
+    final stats = await _exportService.getSessionStats(widget.args.sessionId);
     if (mounted) {
       setState(() {
         _stats = stats;
@@ -53,7 +52,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
     setState(() => _exporting = true);
     final path = await _exportService.exportSession(
       sessionId: widget.args.sessionId,
-      participantName: widget.args.profile.name,
+      participantId: widget.args.profile.personId,
     );
     if (mounted) {
       setState(() {
@@ -90,16 +89,15 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
 
   Widget _buildBody() {
     final s = _stats ?? {};
-    final total    = s['total']    as int?    ?? 0;
-    final withCrops= s['withCrops']as int?    ?? 0;
-    final avgConf  = s['avgConfidence'] as double? ?? 0.0;
-    final avgEAR   = s['avgEAR']   as double? ?? 0.0;
-    final blinks   = s['blinkCount']   as int?    ?? 0;
-    final phases   = (s['phaseCounts'] as Map<String, dynamic>?) ?? {};
+    final total = s['total'] as int? ?? 0;
+    final withCrops = s['withCrops'] as int? ?? 0;
+    final avgConf = s['avgConfidence'] as double? ?? 0.0;
+    final avgEAR = s['avgEAR'] as double? ?? 0.0;
+    final blinks = s['blinkCount'] as int? ?? 0;
+    final phases = (s['phaseCounts'] as Map<String, dynamic>?) ?? {};
 
-    final cropsPercent = total > 0
-        ? ((withCrops / total) * 100).toStringAsFixed(1)
-        : '0.0';
+    final cropsPercent =
+        total > 0 ? ((withCrops / total) * 100).toStringAsFixed(1) : '0.0';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -120,7 +118,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
           ),
           const SizedBox(height: 4),
           Text(
-            'Participant: ${widget.args.profile.name}',
+            'Participant ID: ${widget.args.profile.personId}',
             textAlign: TextAlign.center,
             style: Theme.of(context)
                 .textTheme
@@ -135,8 +133,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
               '$withCrops / $total  ($cropsPercent%)', Icons.image),
           _statCard('Average Confidence',
               '${(avgConf * 100).toStringAsFixed(1)}%', Icons.verified),
-          _statCard('Average EAR',
-              avgEAR.toStringAsFixed(3), Icons.visibility),
+          _statCard('Average EAR', avgEAR.toStringAsFixed(3), Icons.visibility),
           _statCard('Blinks Detected', '$blinks', Icons.remove_red_eye),
 
           const SizedBox(height: 12),
@@ -156,8 +153,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
                           fontSize: 15)),
                   const SizedBox(height: 8),
                   ...phases.entries.map((e) => Padding(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 2),
+                        padding: const EdgeInsets.symmetric(vertical: 2),
                         child: Row(
                           children: [
                             Text(
@@ -171,8 +167,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
                             Text(
                               '${e.value} samples',
                               style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 13),
+                                  color: Colors.white70, fontSize: 13),
                             ),
                           ],
                         ),
@@ -196,8 +191,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child:
-                        CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.download),
             label: Text(_exporting ? 'Exporting…' : 'Export to CSV'),
@@ -207,8 +201,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
             const SizedBox(height: 8),
             Text(
               '✅ Saved: $_exportPath',
-              style: const TextStyle(
-                  color: Colors.greenAccent, fontSize: 11),
+              style: const TextStyle(color: Colors.greenAccent, fontSize: 11),
               textAlign: TextAlign.center,
             ),
           ],
@@ -238,8 +231,7 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
           const SizedBox(height: 8),
 
           TextButton(
-            onPressed: () =>
-                Navigator.of(context).popUntil((r) => r.isFirst),
+            onPressed: () => Navigator.of(context).popUntil((r) => r.isFirst),
             child: const Text('Return to Home',
                 style: TextStyle(color: Colors.white38)),
           ),
@@ -253,11 +245,9 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
       color: AppColors.surface,
       margin: const EdgeInsets.symmetric(vertical: 4),
       child: ListTile(
-        leading:
-            Icon(icon, color: Colors.tealAccent, size: 22),
+        leading: Icon(icon, color: Colors.tealAccent, size: 22),
         title: Text(label,
-            style: const TextStyle(
-                color: Colors.white70, fontSize: 13)),
+            style: const TextStyle(color: Colors.white70, fontSize: 13)),
         trailing: Text(value,
             style: const TextStyle(
                 color: Colors.white,
@@ -267,4 +257,3 @@ class _SessionSummaryScreenState extends State<SessionSummaryScreen> {
     );
   }
 }
-

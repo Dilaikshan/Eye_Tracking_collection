@@ -16,12 +16,13 @@ class MLKitService {
         enableClassification: true,
         enableLandmarks: true,
         enableTracking: true,
-        performanceMode: FaceDetectorMode.accurate,
+        performanceMode: FaceDetectorMode.fast,
       ),
     );
   }
 
-  Future<MLKitFaceData?> processImage(CameraImage image, InputImageRotation rotation) async {
+  Future<MLKitFaceData?> processImage(
+      CameraImage image, InputImageRotation rotation) async {
     if (_isProcessing || _detector == null) return null;
     _isProcessing = true;
 
@@ -52,7 +53,8 @@ class MLKitService {
           ((leftEye.position.x + rightEye.position.x) / 2) / imgW,
           ((leftEye.position.y + rightEye.position.y) / 2) / imgH,
         );
-        gazeEstimate = _estimateGazeFromHeadPose(eyeCenterNorm, headYaw, headPitch);
+        gazeEstimate =
+            _estimateGazeFromHeadPose(eyeCenterNorm, headYaw, headPitch);
       }
 
       _isProcessing = false;
@@ -73,7 +75,8 @@ class MLKitService {
     }
   }
 
-  Offset _estimateGazeFromHeadPose(Offset eyeCenterNorm, double yaw, double pitch) {
+  Offset _estimateGazeFromHeadPose(
+      Offset eyeCenterNorm, double yaw, double pitch) {
     // Normalized space: 1 degree of yaw ≈ 0.003 offset in [0,1] space
     final xOffset = yaw * 0.003;
     final yOffset = pitch * 0.003;
@@ -83,8 +86,9 @@ class MLKitService {
     );
   }
 
-  InputImage _convertCameraImage(CameraImage image, InputImageRotation rotation) {
-    final int width  = image.width;
+  InputImage _convertCameraImage(
+      CameraImage image, InputImageRotation rotation) {
+    final int width = image.width;
     final int height = image.height;
 
     // Single-plane: already NV21
@@ -105,8 +109,8 @@ class MLKitService {
     final Uint8List uBytes = image.planes[1].bytes;
     final Uint8List vBytes = image.planes[2].bytes;
 
-    final int yRowStride    = image.planes[0].bytesPerRow;
-    final int uvRowStride   = image.planes[1].bytesPerRow;
+    final int yRowStride = image.planes[0].bytesPerRow;
+    final int uvRowStride = image.planes[1].bytesPerRow;
     final int uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
 
     final Uint8List nv21 = Uint8List(width * height * 3 ~/ 2);
@@ -120,7 +124,7 @@ class MLKitService {
     }
 
     final int uvHeight = height ~/ 2;
-    final int uvWidth  = width  ~/ 2;
+    final int uvWidth = width ~/ 2;
     for (int row = 0; row < uvHeight; row++) {
       for (int col = 0; col < uvWidth; col++) {
         final int uvOff = row * uvRowStride + col * uvPixelStride;

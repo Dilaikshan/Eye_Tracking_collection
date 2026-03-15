@@ -82,7 +82,7 @@ class ResearchExportService {
   /// Returns the file path on success.
   Future<String?> exportSession({
     required String sessionId,
-    required String participantName,
+    required String participantId,
   }) async {
     try {
       debugPrint('✅ Starting CSV export for session $sessionId…');
@@ -125,7 +125,7 @@ class ResearchExportService {
         final row = _sampleToCsvRow(
           sample: sample,
           sessionId: sessionId,
-          participantName: participantName,
+          participantId: participantId,
         );
         buffer.writeln(row);
       }
@@ -133,10 +133,8 @@ class ResearchExportService {
       // 4. Write to file
       final directory = await _getExportDirectory();
       final dateStr = DateFormat('yyyy-MM-dd_HH-mm').format(DateTime.now());
-      final safeParticipant =
-          participantName.replaceAll(RegExp(r'[^\w]'), '_');
-      final fileName =
-          'eye_tracking_${safeParticipant}_$dateStr.csv';
+      final safeParticipant = participantId.replaceAll(RegExp(r'[^\w]'), '_');
+      final fileName = 'eye_tracking_${safeParticipant}_$dateStr.csv';
       final filePath = '${directory.path}/$fileName';
 
       final file = File(filePath);
@@ -156,33 +154,24 @@ class ResearchExportService {
   String _sampleToCsvRow({
     required Map<String, dynamic> sample,
     required String sessionId,
-    required String participantName,
+    required String participantId,
   }) {
     final target = sample['target'] as Map<String, dynamic>? ?? {};
-    final mediapipe =
-        sample['mediapipe'] as Map<String, dynamic>? ?? {};
+    final mediapipe = sample['mediapipe'] as Map<String, dynamic>? ?? {};
     final mlkit = sample['mlkit'] as Map<String, dynamic>? ?? {};
-    final deviceInfo =
-        sample['deviceInfo'] as Map<String, dynamic>? ?? {};
+    final deviceInfo = sample['deviceInfo'] as Map<String, dynamic>? ?? {};
     final quality = sample['quality'] as Map<String, dynamic>? ?? {};
     final participantCtx =
         sample['participantContext'] as Map<String, dynamic>? ?? {};
 
-    final mpCorners =
-        mediapipe['eyeCorners'] as Map<String, dynamic>? ?? {};
-    final mpLeftInner =
-        mpCorners['leftInner'] as Map<String, dynamic>? ?? {};
-    final mpLeftOuter =
-        mpCorners['leftOuter'] as Map<String, dynamic>? ?? {};
-    final mpRightInner =
-        mpCorners['rightInner'] as Map<String, dynamic>? ?? {};
-    final mpRightOuter =
-        mpCorners['rightOuter'] as Map<String, dynamic>? ?? {};
+    final mpCorners = mediapipe['eyeCorners'] as Map<String, dynamic>? ?? {};
+    final mpLeftInner = mpCorners['leftInner'] as Map<String, dynamic>? ?? {};
+    final mpLeftOuter = mpCorners['leftOuter'] as Map<String, dynamic>? ?? {};
+    final mpRightInner = mpCorners['rightInner'] as Map<String, dynamic>? ?? {};
+    final mpRightOuter = mpCorners['rightOuter'] as Map<String, dynamic>? ?? {};
 
-    final mpFaceBox =
-        mediapipe['faceBox'] as Map<String, dynamic>? ?? {};
-    final mlkitHeadPose =
-        mlkit['headPose'] as Map<String, dynamic>? ?? {};
+    final mpFaceBox = mediapipe['faceBox'] as Map<String, dynamic>? ?? {};
+    final mlkitHeadPose = mlkit['headPose'] as Map<String, dynamic>? ?? {};
 
     final leftPupil =
         mediapipe['leftPupilCenter'] as Map<String, dynamic>? ?? {};
@@ -196,7 +185,7 @@ class ResearchExportService {
         mediapipe['rightIrisCenter'] as Map<String, dynamic>? ?? {};
 
     final values = [
-      _esc(participantName),
+      _esc(participantId),
       _esc(sessionId),
       sample['timestamp']?.toString() ?? '',
       _esc(participantCtx['blindnessType']?.toString() ?? ''),
@@ -212,49 +201,49 @@ class ResearchExportService {
       target['pixelX']?.toString() ?? '0',
       target['pixelY']?.toString() ?? '0',
       // iris centers (normalized [0,1])
-      leftIrisCenter['x']?.toString()  ?? '0',
-      leftIrisCenter['y']?.toString()  ?? '0',
-      mediapipe['leftIrisDepth']?.toString()  ?? '0',
+      leftIrisCenter['x']?.toString() ?? '0',
+      leftIrisCenter['y']?.toString() ?? '0',
+      mediapipe['leftIrisDepth']?.toString() ?? '0',
       rightIrisCenter['x']?.toString() ?? '0',
       rightIrisCenter['y']?.toString() ?? '0',
       mediapipe['rightIrisDepth']?.toString() ?? '0',
       // pupils (pixel)
-      leftPupil['pixelX']?.toString()  ?? '0',
-      leftPupil['pixelY']?.toString()  ?? '0',
+      leftPupil['pixelX']?.toString() ?? '0',
+      leftPupil['pixelY']?.toString() ?? '0',
       rightPupil['pixelX']?.toString() ?? '0',
       rightPupil['pixelY']?.toString() ?? '0',
       // EAR
-      mediapipe['leftEAR']?.toString()  ?? '0',
+      mediapipe['leftEAR']?.toString() ?? '0',
       mediapipe['rightEAR']?.toString() ?? '0',
       mediapipe['ipdNormalized']?.toString() ?? '0',
       // eye corners
-      mpLeftInner['x']?.toString()  ?? '0',
-      mpLeftInner['y']?.toString()  ?? '0',
-      mpLeftOuter['x']?.toString()  ?? '0',
-      mpLeftOuter['y']?.toString()  ?? '0',
+      mpLeftInner['x']?.toString() ?? '0',
+      mpLeftInner['y']?.toString() ?? '0',
+      mpLeftOuter['x']?.toString() ?? '0',
+      mpLeftOuter['y']?.toString() ?? '0',
       mpRightInner['x']?.toString() ?? '0',
       mpRightInner['y']?.toString() ?? '0',
       mpRightOuter['x']?.toString() ?? '0',
       mpRightOuter['y']?.toString() ?? '0',
       // head pose
-      mlkitHeadPose['yaw']?.toString()   ?? '0',
+      mlkitHeadPose['yaw']?.toString() ?? '0',
       mlkitHeadPose['pitch']?.toString() ?? '0',
-      mlkitHeadPose['roll']?.toString()  ?? '0',
+      mlkitHeadPose['roll']?.toString() ?? '0',
       // eye open probability
-      mlkit['leftEyeOpenProb']?.toString()  ?? '0',
+      mlkit['leftEyeOpenProb']?.toString() ?? '0',
       mlkit['rightEyeOpenProb']?.toString() ?? '0',
       // face box
-      mpFaceBox['left']?.toString()   ?? '0',
-      mpFaceBox['top']?.toString()    ?? '0',
-      mpFaceBox['right']?.toString()  ?? '0',
+      mpFaceBox['left']?.toString() ?? '0',
+      mpFaceBox['top']?.toString() ?? '0',
+      mpFaceBox['right']?.toString() ?? '0',
       mpFaceBox['bottom']?.toString() ?? '0',
       // quality / context
       quality['overallConfidence']?.toString() ?? '0',
       '0', // ambient_light placeholder
-      deviceInfo['screenWidthPixels']?.toString()  ?? '0',
+      deviceInfo['screenWidthPixels']?.toString() ?? '0',
       deviceInfo['screenHeightPixels']?.toString() ?? '0',
       // eye crops (large base64 – may be empty)
-      _esc(mediapipe['leftEyeCrop']?.toString()  ?? ''),
+      _esc(mediapipe['leftEyeCrop']?.toString() ?? ''),
       _esc(mediapipe['rightEyeCrop']?.toString() ?? ''),
     ];
 
@@ -300,20 +289,18 @@ class ResearchExportService {
       final phaseCounts = <String, int>{};
 
       for (final chunkDoc in chunksSnap.docs) {
-        final samples =
-            (chunkDoc.data()['samples'] as List<dynamic>? ?? []);
+        final samples = (chunkDoc.data()['samples'] as List<dynamic>? ?? []);
         for (final s in samples) {
           if (s is! Map<String, dynamic>) continue;
           total++;
           final mp = s['mediapipe'] as Map<String, dynamic>? ?? {};
-          final quality =
-              s['quality'] as Map<String, dynamic>? ?? {};
+          final quality = s['quality'] as Map<String, dynamic>? ?? {};
 
           if (mp['leftEyeCrop'] != null) withCrops++;
           totalConf += (quality['overallConfidence'] as num? ?? 0).toDouble();
-          final ear = ((mp['leftEAR'] as num? ?? 0) +
-                  (mp['rightEAR'] as num? ?? 0)) /
-              2;
+          final ear =
+              ((mp['leftEAR'] as num? ?? 0) + (mp['rightEAR'] as num? ?? 0)) /
+                  2;
           totalEAR += ear;
           if (quality['blink'] == true) blinks++;
 
@@ -336,7 +323,3 @@ class ResearchExportService {
     }
   }
 }
-
-
-
-

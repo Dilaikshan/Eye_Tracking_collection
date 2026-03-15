@@ -11,6 +11,9 @@ class MediaPipeService {
   FaceMeshDetector? _detector;
   bool _isProcessing = false;
   int _frameCount = 0;
+  Offset? _smoothedLeftIris;
+  Offset? _smoothedRightIris;
+  static const double _alpha = 0.35;
 
   // ── Landmark index constants ────────────────────────────────────────────────
 
@@ -151,6 +154,19 @@ class MediaPipeService {
     final rightIrisNorm =
         Offset(rightIrisCenterPx.dx / imgW, rightIrisCenterPx.dy / imgH);
 
+    _smoothedLeftIris = _smoothedLeftIris == null
+        ? leftIrisNorm
+        : Offset(
+            _alpha * leftIrisNorm.dx + (1 - _alpha) * _smoothedLeftIris!.dx,
+            _alpha * leftIrisNorm.dy + (1 - _alpha) * _smoothedLeftIris!.dy,
+          );
+    _smoothedRightIris = _smoothedRightIris == null
+        ? rightIrisNorm
+        : Offset(
+            _alpha * rightIrisNorm.dx + (1 - _alpha) * _smoothedRightIris!.dx,
+            _alpha * rightIrisNorm.dy + (1 - _alpha) * _smoothedRightIris!.dy,
+          );
+
     final leftIrisNormPoints =
         leftIrisPixels.map((p) => Offset(p.dx / imgW, p.dy / imgH)).toList();
     final rightIrisNormPoints =
@@ -161,8 +177,8 @@ class MediaPipeService {
     final rightEAR = _computeEAR(meshPoints, _rightEarIdx);
 
     // 3. Eye open from EAR
-    final leftEyeOpen = leftEAR > 0.2;
-    final rightEyeOpen = rightEAR > 0.2;
+    final leftEyeOpen = leftEAR > 0.18;
+    final rightEyeOpen = rightEAR > 0.18;
 
     // 4. Iris Z-depth
     final leftIrisDepth = meshPoints.length > _leftIrisStart + 4
@@ -205,10 +221,10 @@ class MediaPipeService {
         'crops=${leftCropB64 != null ? "ok" : "null"}');
 
     return MediaPipeIrisData(
-      leftIrisCenter: leftIrisNorm,
-      rightIrisCenter: rightIrisNorm,
-      leftPupilCenter: leftIrisNorm,
-      rightPupilCenter: rightIrisNorm,
+      leftIrisCenter: _smoothedLeftIris!,
+      rightIrisCenter: _smoothedRightIris!,
+      leftPupilCenter: _smoothedLeftIris!,
+      rightPupilCenter: _smoothedRightIris!,
       leftIrisLandmarks: leftIrisNormPoints,
       rightIrisLandmarks: rightIrisNormPoints,
       rawLeftIrisCenterPx: leftIrisCenterPx,
@@ -488,6 +504,8 @@ class MediaPipeService {
   }
 
   void dispose() {
+    _smoothedLeftIris = null;
+    _smoothedRightIris = null;
     _detector?.close();
     _detector = null;
   }

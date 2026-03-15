@@ -1,5 +1,5 @@
 class UserProfile {
-  final String name;
+  final String personId;
   final int age;
   final String blindnessType;
   final String dominantEye;
@@ -10,7 +10,7 @@ class UserProfile {
   final DateTime createdAt;
 
   UserProfile({
-    required this.name,
+    required this.personId,
     required this.age,
     required this.blindnessType,
     required this.dominantEye,
@@ -23,7 +23,7 @@ class UserProfile {
 
   Map<String, dynamic> toMap() {
     return {
-      'name': name,
+      'personId': personId,
       'age': age,
       'blindnessType': blindnessType,
       'dominantEye': dominantEye,
@@ -37,7 +37,7 @@ class UserProfile {
 
   factory UserProfile.fromMap(Map<String, dynamic> map) {
     return UserProfile(
-      name: map['name'] ?? '',
+      personId: map['personId'] ?? '',
       age: map['age'] ?? 0,
       blindnessType: map['blindnessType'] ?? '',
       dominantEye: map['dominantEye'] ?? 'both',

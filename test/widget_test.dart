@@ -13,7 +13,9 @@ import 'package:eye_tracking_collection/main.dart';
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const EyeTrackingApp());
+    await tester.pumpWidget(
+      const EyeTrackingApp(initialRoute: '/permission'),
+    );
 
     // Verify that the app loads
     expect(find.byType(MaterialApp), findsOneWidget);
