@@ -48,7 +48,6 @@ class _UserFormScreenState extends State<UserFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final lang = widget.languageCode;
     return Scaffold(
       appBar: AppBar(title: const Text('Participant Details')),
       body: Padding(

@@ -95,20 +95,20 @@ class _EyeTrackingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     final gazeFillPaint = Paint()
-      ..color = Colors.yellowAccent.withOpacity(0.5)
+      ..color = Colors.yellowAccent.withValues(alpha: 0.5)
       ..style = PaintingStyle.fill;
 
     if (mp != null) {
       // ── Left iris ──────────────────────────────────────────────────────────
       if (mp.leftIrisLandmarks.isNotEmpty) {
-        _drawIris(canvas, mp.leftIrisLandmarks, mp.leftPupilCenter,
-            irisPaint, landmarkPaint, pupilFillPaint, crosshairPaint, size);
+        _drawIris(canvas, mp.leftIrisLandmarks, mp.leftPupilCenter, irisPaint,
+            landmarkPaint, pupilFillPaint, crosshairPaint, size);
       }
 
       // ── Right iris ─────────────────────────────────────────────────────────
       if (mp.rightIrisLandmarks.isNotEmpty) {
-        _drawIris(canvas, mp.rightIrisLandmarks, mp.rightPupilCenter,
-            irisPaint, landmarkPaint, pupilFillPaint, crosshairPaint, size);
+        _drawIris(canvas, mp.rightIrisLandmarks, mp.rightPupilCenter, irisPaint,
+            landmarkPaint, pupilFillPaint, crosshairPaint, size);
       }
     }
 
@@ -155,7 +155,7 @@ class _EyeTrackingPainter extends CustomPainter {
 
     // Draw filled semi-transparent iris disc
     final irisFillPaint = Paint()
-      ..color = Colors.greenAccent.withOpacity(0.12)
+      ..color = Colors.greenAccent.withValues(alpha: 0.12)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, displayRadius, irisFillPaint);
 
@@ -227,7 +227,7 @@ class _EyeTrackingPainter extends CustomPainter {
 
     // Background panel
     final bgPaint = Paint()
-      ..color = Colors.black.withOpacity(0.55)
+      ..color = Colors.black.withValues(alpha: 0.55)
       ..style = PaintingStyle.fill;
     canvas.drawRRect(
       RRect.fromLTRBR(

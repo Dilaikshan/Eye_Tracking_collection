@@ -61,7 +61,6 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
 
   late List<DiagnosticItem> _checks;
   bool _isRunning = false;
-  Uint8List? _leftCropBytes; // shown in eye crop check tile
 
   @override
   void initState() {
@@ -116,7 +115,9 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
   void _startLiveStream() {
     if (_cameraController == null ||
         !_cameraController!.value.isInitialized ||
-        _streamRunning) return;
+        _streamRunning) {
+      return;
+    }
     _streamRunning = true;
 
     _cameraController!.startImageStream((CameraImage image) async {
@@ -336,9 +337,6 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
       if (lCrop != null) lBytes = base64Decode(lCrop);
       if (rCrop != null) rBytes = base64Decode(rCrop);
     } catch (_) {}
-    setState(() {
-      _leftCropBytes = lBytes;
-    });
     _setStatus(
       2,
       CheckStatus.passed,
@@ -383,8 +381,9 @@ class _DiagnosticScreenState extends State<DiagnosticScreen> {
         'source': 'diagnostic_screen',
       });
       final snap = await ref.get();
-      if (!snap.exists)
+      if (!snap.exists) {
         throw Exception('Write succeeded but read found nothing');
+      }
       await ref.delete();
       _setStatus(4, CheckStatus.passed, 'Firestore: Read/Write OK ✅');
     } catch (e) {

@@ -10,7 +10,6 @@ import 'package:eye_tracking_collection/models/user_profile.dart';
 import 'package:eye_tracking_collection/models/eye_tracking_data.dart';
 import 'package:eye_tracking_collection/models/mediapipe_data.dart';
 import 'package:eye_tracking_collection/models/mlkit_data.dart';
-import 'package:eye_tracking_collection/models/azure_data.dart';
 import 'package:eye_tracking_collection/models/eye_tracking_sample.dart';
 import 'package:eye_tracking_collection/screens/diagnostic_screen.dart';
 import 'package:eye_tracking_collection/screens/session_summary_screen.dart';
@@ -61,7 +60,6 @@ class CollectionGridScreen extends StatefulWidget {
 }
 
 class _CollectionGridScreenState extends State<CollectionGridScreen> {
-  int _currentGridIndex = 0;
   Timer? _timer;
   CameraController? _cameraController;
 
@@ -70,15 +68,6 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   // (unavoidable in Flutter), so we need to give the OS enough time to fully
   // release the camera hardware. 500 ms is sufficient on most Android devices.
   static const Duration _cameraReleaseDelay = Duration(milliseconds: 500);
-
-  final List<Alignment> _gridPositions = const [
-    Alignment.topLeft,
-    Alignment.topCenter,
-    Alignment.topRight,
-    Alignment.bottomLeft,
-    Alignment.bottomCenter,
-    Alignment.bottomRight,
-  ];
 
   ExperimentPhase _phase = ExperimentPhase.guidelines;
   final TtsService _tts = TtsService();
@@ -123,7 +112,6 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
   // Moving pattern tracking
   int _lineStepIndex = 0;
-  bool _showCamera = true;
 
   // ── Quality bar & sample counter ────────────────────────────────────────────
   int _totalSamplesCollected = 0;
@@ -181,8 +169,9 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   }
 
   void _startCameraStream() {
-    if (_cameraController == null || !_cameraController!.value.isInitialized)
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return;
+    }
 
     _cameraController!.startImageStream((CameraImage image) async {
       _frameSkipCounter++;
@@ -280,6 +269,8 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         await _cameraController?.dispose();
       } catch (_) {}
       _cameraController = null;
+
+      if (!mounted) return;
 
       final passed = await Navigator.of(context).push<bool>(
         MaterialPageRoute(
@@ -526,7 +517,6 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         Duration(milliseconds: speedDurations[_movingSpeedIndex]), (_) {
       // Follow the line pattern
       final next = pattern[_lineStepIndex % pattern.length];
-      _currentGridIndex = next;
       _colorIndex = next;
       final region = _regions[next];
       _recordSample(
@@ -786,7 +776,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
   MediaPipeData _mapMediaPipeForOverlay(
       MediaPipeIrisData data, Size imageSize) {
     // Front camera preview is mirrored: flip X  →  mirroredX = (1 - normX) * width
-    List<Offset> _toMirroredPixels(List<Offset> normPts) => normPts
+    List<Offset> toMirroredPixels(List<Offset> normPts) => normPts
         .map((p) => Offset(
               (1.0 - p.dx) * imageSize.width,
               p.dy * imageSize.height,
@@ -795,7 +785,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
     // Use raw pixel coords when available (already in image space but NOT mirrored)
     // so we still mirror them.
-    Offset _mirrorPupil(Offset? rawPx, Offset normFallback) {
+    Offset mirrorPupil(Offset? rawPx, Offset normFallback) {
       if (rawPx != null) {
         // raw pixel → mirror X
         return Offset(imageSize.width - rawPx.dx, rawPx.dy);
@@ -805,12 +795,12 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
     }
 
     return MediaPipeData(
-      leftIrisLandmarks: _toMirroredPixels(data.leftIrisLandmarks),
-      rightIrisLandmarks: _toMirroredPixels(data.rightIrisLandmarks),
+      leftIrisLandmarks: toMirroredPixels(data.leftIrisLandmarks),
+      rightIrisLandmarks: toMirroredPixels(data.rightIrisLandmarks),
       leftPupilCenter:
-          _mirrorPupil(data.rawLeftIrisCenterPx, data.leftPupilCenter),
+          mirrorPupil(data.rawLeftIrisCenterPx, data.leftPupilCenter),
       rightPupilCenter:
-          _mirrorPupil(data.rawRightIrisCenterPx, data.rightPupilCenter),
+          mirrorPupil(data.rawRightIrisCenterPx, data.rightPupilCenter),
       leftEyeOpen: data.leftEyeOpen,
       rightEyeOpen: data.rightEyeOpen,
       confidence: data.confidence,
@@ -858,7 +848,6 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final region = _regions[_currentGridIndex];
     const borderColor = Colors.tealAccent;
 
     return Scaffold(
@@ -899,7 +888,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: borderColor.withOpacity(0.6),
+                          color: borderColor.withValues(alpha: 0.6),
                           blurRadius: 24,
                           spreadRadius: 8,
                         ),
@@ -967,7 +956,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
                     padding:
                         const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Colors.tealAccent.withOpacity(0.2),
+                      color: Colors.tealAccent.withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.tealAccent, width: 2),
                     ),
@@ -1071,7 +1060,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
           if (_phase == ExperimentPhase.done)
             Positioned.fill(
               child: Container(
-                color: Colors.black.withOpacity(0.92),
+                color: Colors.black.withValues(alpha: 0.92),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -1225,7 +1214,7 @@ class _CollectionGridScreenState extends State<CollectionGridScreen> {
         break;
       case ExperimentPhase.moving:
         // manual tap: jump to next random region
-        _currentGridIndex = Random().nextInt(_regions.length);
+        _colorIndex = Random().nextInt(_regions.length);
         setState(() {});
         break;
       case ExperimentPhase.done:
@@ -1270,7 +1259,7 @@ class _GuidePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = color.withOpacity(0.7)
+      ..color = color.withValues(alpha: 0.7)
       ..strokeWidth = 2
       ..style = PaintingStyle.stroke;
     final rect = Rect.fromLTWH(0, 0, size.width, size.height);
